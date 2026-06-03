@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Focal Lab · 포맷 환산기</title>
+  <meta name="description" content="Focal Lab — 필름·센서 포맷의 화각과 심도를 135 풀프레임 기준으로 환산하는 사진가용 계산기">
+  <link rel="stylesheet" href="shared/style.css">
+  <link rel="stylesheet" href="src/app.css">
+  <script src="shared/theme.js"></script>
+</head>
+<body>
+  <script src="shared/nav.js" data-home="./" data-brand="Focal Lab"></script>
+
+  <main class="wrap wrap--wide app">
+    <header class="app__intro">
+      <p class="app__kicker">Focal Lab</p>
+      <h1>포맷 환산기</h1>
+      <p>필름·센서 포맷의 <strong>화각</strong>과 <strong>심도</strong>를 135 풀프레임 기준으로 환산합니다.</p>
+    </header>
+
+    <div class="app__grid">
+      <!-- 입력 (모바일에서는 하단 고정 시트) -->
+      <section class="panel sticky inputs" id="inputs">
+        <button class="sheet-handle" id="sheet-handle" type="button" aria-expanded="true" aria-controls="inputs">
+          <span class="sheet-handle__grip" aria-hidden="true"></span>
+          <span class="sheet-handle__summary" id="sheet-summary">입력값 조절</span>
+          <span class="sheet-handle__chevron" aria-hidden="true">▾</span>
+        </button>
+
+        <div class="sheet-body">
+          <div class="field">
+            <label for="format">포맷</label>
+            <select id="format" aria-label="포맷 선택"></select>
+            <div class="hint" id="format-note"></div>
+          </div>
+
+          <div class="field">
+            <label for="focal">초점거리</label>
+            <div class="combo">
+              <span class="input-unit" data-unit="mm">
+                <input type="text" id="focal" inputmode="decimal" value="80" aria-label="초점거리 입력">
+              </span>
+              <input type="range" id="focal-range" min="1" max="600" step="1" value="80" aria-label="초점거리 슬라이더">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="fnumber">조리개</label>
+            <div class="combo">
+              <span class="input-unit input-unit--prefix" data-unit="f/">
+                <input type="text" id="fnumber" inputmode="decimal" value="2.8" list="stops" aria-label="조리개 입력">
+              </span>
+              <input type="range" id="fnumber-range" min="0" max="12" step="1" value="3" aria-label="조리개 슬라이더">
+            </div>
+            <datalist id="stops">
+              <option value="1.0"></option><option value="1.4"></option><option value="2.0"></option>
+              <option value="2.8"></option><option value="4.0"></option><option value="5.6"></option>
+              <option value="8"></option><option value="11"></option><option value="16"></option>
+              <option value="22"></option><option value="32"></option><option value="45"></option>
+              <option value="64"></option>
+            </datalist>
+          </div>
+
+          <details class="advanced" id="advanced">
+            <summary>고급 · 실제 심도 계산</summary>
+            <div class="field">
+              <label for="distance">초점 맞춘 거리</label>
+              <div class="combo">
+                <span class="input-unit" data-unit="m">
+                  <input type="text" id="distance" inputmode="decimal" value="3" aria-label="초점 거리 입력">
+                </span>
+                <input type="range" id="distance-range" min="0.1" max="50" step="0.1" value="3" aria-label="초점 거리 슬라이더">
+              </div>
+              <div class="hint" id="coc-hint"></div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- 결과 -->
+      <section class="results">
+        <section class="result-hero" id="result-hero" aria-live="polite">
+          <div class="result-hero__item">
+            <span class="result-hero__label"><span class="lbl-long">환산 초점거리 · FF</span><span class="lbl-short">환산 초점·FF</span></span>
+            <span class="result-hero__value" id="r-focal">—</span>
+            <span class="result-hero__sub" id="r-focal-sub"></span>
+          </div>
+          <div class="result-hero__divider" aria-hidden="true"></div>
+          <div class="result-hero__item">
+            <span class="result-hero__label"><span class="lbl-long">환산 조리개 · 심도 등가</span><span class="lbl-short">환산 심도</span></span>
+            <span class="result-hero__value" id="r-aperture">—</span>
+            <span class="result-hero__sub" id="r-aperture-sub"></span>
+          </div>
+        </section>
+
+        <div class="panel">
+          <p class="panel__title">포맷 · 화각 <span id="est-flag"></span></p>
+          <svg class="viz" id="viz" viewBox="0 0 360 360" role="img" aria-label="포맷 프레임 비교와 화각 시각화"></svg>
+        </div>
+
+        <div class="panel" id="dof-panel" hidden>
+          <p class="panel__title">실제 심도 · 초점 <span id="dof-dist"></span></p>
+          <div class="rows">
+            <div class="row"><span class="row__k">과초점 거리</span><span class="row__v" id="r-hyper">—</span></div>
+            <div class="row"><span class="row__k">근점 (선명 시작)</span><span class="row__v" id="r-near">—</span></div>
+            <div class="row"><span class="row__k">원점 (선명 끝)</span><span class="row__v" id="r-far">—</span></div>
+            <div class="row"><span class="row__k">심도 폭</span><span class="row__v" id="r-depth">—</span></div>
+          </div>
+          <div class="hint" style="margin-top:10px">착란원(CoC) <span id="r-coc"></span> · 포맷 대각÷1500 기준</div>
+        </div>
+      </section>
+    </div>
+
+    <details class="notes">
+      <summary>데이터 출처 · 주석</summary>
+      <ul id="notes-list"></ul>
+    </details>
+  </main>
+
+  <script src="src/convert.js"></script>
+  <script src="src/formats.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
