@@ -6,7 +6,7 @@
 
 - **상태**: v0.1 (초기 구현 완료, 실브라우저 검증 완료) — photologs에서 **독립 저장소로 분리**.
 - **최종 갱신**: 2026-06-03
-- **위치**: 독립 저장소 루트(자체 완결). GitHub Pages **루트 배포** → `https://flatwhite-ice.github.io/focal-lab/`.
+- **위치**: 독립 저장소 루트(자체 완결). GitHub Pages **루트 배포** → `https://flatwhite-ice.github.io/focal-lab-dof/`.
 - **라이선스/배포**: GitHub Pages 정적 발행, 빌드 없음
 
 ---
@@ -19,7 +19,7 @@
 
 ## 2. 아키텍처
 ```
-focal-lab/                 (저장소 루트 = 사이트 루트)
+focal-lab-dof/                 (저장소 루트 = 사이트 루트)
   .nojekyll                 Jekyll 비활성(shared/ 등 그대로 서빙)
   index.html                앱 셸 (마크업 + 공유/소스 로드)
   README.md                 소개 + 로컬 실행 + 배포 안내
@@ -106,9 +106,9 @@ focal-lab/                 (저장소 루트 = 사이트 루트)
 
 ## 8. 배포 (GitHub Pages)
 독립 저장소(루트 = 사이트 루트)로 분리 완료. 발행 절차는 README "배포" 참고. 요약:
-1. 빈 공개 repo `flatwhite-ice/focal-lab` 생성 → `git push -u origin main`.
+1. 빈 공개 repo `flatwhite-ice/focal-lab-dof` 생성 → `git push -u origin main`.
 2. Settings → Pages → Source: Deploy from a branch, `main` / `/ (root)` → Save.
-3. `https://flatwhite-ice.github.io/focal-lab/` 발행. 루트 `.nojekyll`로 `shared/`·`src/` 그대로 서빙.
+3. `https://flatwhite-ice.github.io/focal-lab-dof/` 발행. 루트 `.nojekyll`로 `shared/`·`src/` 그대로 서빙.
 - 공유 자산은 `shared/`에 벤더링되어 외부 의존 없음. 원본(photologs `docs/shared/`) 수정 시 수동 동기화 필요.
 
 ## 9. 검증 방법

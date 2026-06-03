@@ -27,14 +27,14 @@ python3 -m http.server 8000
 ```
 
 ## 배포 (GitHub Pages)
-1. GitHub에서 빈 **공개** 저장소 `focal-lab` 생성 (README/license 없이).
+1. GitHub에서 빈 **공개** 저장소 `focal-lab-dof` 생성 (README/license 없이).
 2. 푸시:
    ```bash
-   git remote add origin https://github.com/flatwhite-ice/focal-lab.git
+   git remote add origin https://github.com/flatwhite-ice/focal-lab-dof.git
    git branch -M main
    git push -u origin main
    ```
 3. 저장소 **Settings → Pages → Source**: `Deploy from a branch`, Branch **`main` / `/ (root)`** → Save.
-4. 약 1분 후 **https://flatwhite-ice.github.io/focal-lab/** 에서 확인.
+4. 약 1분 후 **https://flatwhite-ice.github.io/focal-lab-dof/** 에서 확인.
 
 > `shared/`는 photologs 사이트에서 벤더링한 사본입니다. 원본 변경 시 수동으로 동기화하세요.
