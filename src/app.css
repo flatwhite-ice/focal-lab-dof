@@ -282,9 +282,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px 
     border: none; border-top: 1px solid var(--border);
     border-radius: 18px 18px 0 0;
     max-height: 70vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    background: color-mix(in srgb, var(--surface) 95%, transparent);   /* 5% 투명 — 뒤 화각 애니메이션 인지 */
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);                                /* iOS Safari */
+    background: color-mix(in srgb, var(--surface) 30%, transparent);   /* 70% 투명 — 뒤 화각·포맷 도형이 잘 비치도록 */
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);                                /* iOS Safari */
     box-shadow: 0 -12px 34px rgba(16, 24, 40, .18);
     transition: transform .32s var(--ease);
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
@@ -299,7 +299,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px 
     display: flex; align-items: center; gap: 12px;
     position: sticky; top: 0; z-index: 1;
     width: 100%; min-height: 64px; padding: 16px 6px 12px;
-    background: color-mix(in srgb, var(--surface) 95%, transparent); border: none; cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 30%, transparent); border: none; cursor: pointer;
     font: inherit; color: var(--text); text-align: left;
     transition: background .25s var(--ease);
   }
