@@ -242,7 +242,7 @@
       '<line class="v-diag" x1="' + n(fx) + '" y1="' + n(fy) + '" x2="' + n(fx + fw) + '" y2="' + n(fy + fh) + '"/>' +
       // 치수: 장변(위) · 단변(오른쪽)
       '<text class="v-dim" x="' + topCx + '" y="' + n(fy - 8) + '" text-anchor="middle">' + esc(fmtLong + " mm") + '</text>' +
-      '<text class="v-dim" x="' + n(fx + fw + 8) + '" y="' + n(topCy) + '" dominant-baseline="middle">' + esc(fmtShort) + '</text>' +
+      '<text class="v-dim" x="' + n(fx + fw + 8) + '" y="' + n(topCy) + '" dominant-baseline="middle">' + esc(fmtShort + " mm") + '</text>' +
       // 대각 mm (대각선 중앙 위)
       '<text class="v-diag-lbl" x="' + n(topCx + 6) + '" y="' + n(topCy - 4) + '">' + esc("대각 " + n(diag) + "mm") + '</text>' +
       // 크롭 배지(좌상단)
