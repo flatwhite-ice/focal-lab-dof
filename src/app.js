@@ -141,6 +141,9 @@
   /* ---------- 결과 카운트업 + 강조 펄스 ---------- */
   var REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // 시각화 진입 애니메이션 상태: 현재 표시 중인 {scale, a:[6 각도]} 와 진행 중 rAF
+  var lastFmtId = null, vizCur = null, vizRAF = null;
+
   function pulse(el) {
     if (REDUCED) return;
     var item = el.closest(".result-hero__item");
@@ -211,14 +214,17 @@
     drawViz(f, focal);
   }
 
-  /* ---------- 통합 시각화: 프레임(상단) + 화각 부채꼴(하단) ---------- */
-  function drawViz(f, focal) {
+  /* ---------- 통합 시각화: 프레임(상단) + 화각 부채꼴(하단) ----------
+     drawViz: 목표값을 계산해 진입 애니메이션(rAF 보간)을 구동.
+     renderViz: 주어진 그룹 scale(사각형 확대용)·각도 배열 a[6]로 한 프레임을 그림(순수). */
+
+  // a = [aDiag, aLong, aShort, ffADiag, ffALong, ffAShort] (도). gscale = 환산 포맷 사각형 그룹 확대(0~1).
+  function renderViz(f, gscale, a) {
     var W = 360;
     var ff = C.FF;
     var fmtLong = Math.max(f.w, f.h), fmtShort = Math.min(f.w, f.h);
     var ffLong = Math.max(ff.w, ff.h), ffShort = Math.min(ff.w, ff.h);
     var crop = C.cropFactor(f), diag = C.diag(f);
-    var aLong = C.aov(fmtLong, focal), aShort = C.aov(fmtShort, focal), aDiag = C.aov(diag, focal);
 
     function esc(s) { return escapeXml(s); }
     function n(v) { return v.toFixed(1); }
@@ -226,60 +232,106 @@
     /* ===== 상단: 프레임 + 치수 + 대각선 + 크롭 ===== */
     var topCx = 180, topCy = 95;
     var maxHalfW = Math.max(fmtLong, ffLong) / 2, maxHalfH = Math.max(fmtShort, ffShort) / 2;
-    var scale = Math.min((W / 2 - 56) / maxHalfW, (75) / maxHalfH);
-    var fw = fmtLong * scale, fh = fmtShort * scale;       // 포맷 사각형 px
-    var ffw = ffLong * scale, ffh = ffShort * scale;       // FF 사각형 px
+    var pxScale = Math.min((W / 2 - 56) / maxHalfW, (75) / maxHalfH);
+    var fw = fmtLong * pxScale, fh = fmtShort * pxScale;   // 포맷 사각형 px
+    var ffw = ffLong * pxScale, ffh = ffShort * pxScale;   // FF 사각형 px
     var fx = topCx - fw / 2, fy = topCy - fh / 2;
 
     function rect(w, h, cls) {
       return '<rect class="' + cls + '" x="' + n(topCx - w / 2) + '" y="' + n(topCy - h / 2) +
         '" width="' + n(w) + '" height="' + n(h) + '" rx="2"/>';
     }
+    // 환산 포맷 사각형 그룹 — 중심(소실점)에서 gscale로 확대 + 페이드 (포맷 변경 시 등장)
+    var grpAttr = gscale >= 0.999 ? "" :
+      ' transform="translate(' + topCx + ' ' + topCy + ') scale(' + gscale.toFixed(3) +
+      ') translate(' + (-topCx) + ' ' + (-topCy) + ')" opacity="' + Math.max(0, gscale).toFixed(3) + '"';
+    var fmtGroup =
+      '<g' + grpAttr + '>' +
+        rect(fw, fh, "v-frame-fmt") +
+        '<line class="v-diag" x1="' + n(fx) + '" y1="' + n(fy) + '" x2="' + n(fx + fw) + '" y2="' + n(fy + fh) + '"/>' +
+        '<text class="v-dim" x="' + topCx + '" y="' + n(fy - 8) + '" text-anchor="middle">' + esc(fmtLong + " mm") + '</text>' +
+        '<text class="v-dim" x="' + n(fx + fw + 8) + '" y="' + n(topCy) + '" dominant-baseline="middle">' + esc(fmtShort + " mm") + '</text>' +
+        '<text class="v-diag-lbl" x="' + n(topCx + 6) + '" y="' + n(topCy - 4) + '">' + esc("대각 " + n(diag) + "mm") + '</text>' +
+        '<text class="v-name" x="' + topCx + '" y="184" text-anchor="middle">' + esc(f.name) + '</text>' +
+      '</g>';
     var top =
-      rect(fw, fh, "v-frame-fmt") +
-      rect(ffw, ffh, "v-frame-ff") +
-      // 대각선
-      '<line class="v-diag" x1="' + n(fx) + '" y1="' + n(fy) + '" x2="' + n(fx + fw) + '" y2="' + n(fy + fh) + '"/>' +
-      // 치수: 장변(위) · 단변(오른쪽)
-      '<text class="v-dim" x="' + topCx + '" y="' + n(fy - 8) + '" text-anchor="middle">' + esc(fmtLong + " mm") + '</text>' +
-      '<text class="v-dim" x="' + n(fx + fw + 8) + '" y="' + n(topCy) + '" dominant-baseline="middle">' + esc(fmtShort + " mm") + '</text>' +
-      // 대각 mm (대각선 중앙 위)
-      '<text class="v-diag-lbl" x="' + n(topCx + 6) + '" y="' + n(topCy - 4) + '">' + esc("대각 " + n(diag) + "mm") + '</text>' +
-      // 크롭 배지(좌상단)
+      rect(ffw, ffh, "v-frame-ff") +                       // 풀프레임 기준틀 (고정)
+      fmtGroup +
+      // 크롭 배지 / 범례 (고정)
       '<text class="v-badge" x="14" y="22">' + esc("크롭 ×" + crop.toFixed(crop < 1 ? 3 : 2)) + '</text>' +
-      // 포맷명 / FF 캡션
-      '<text class="v-name" x="' + topCx + '" y="184" text-anchor="middle">' + esc(f.name) + '</text>' +
-      '<text class="v-cap" x="346" y="22" text-anchor="end">▱ 풀프레임</text>';
+      '<text class="v-cap-fmt" x="346" y="20" text-anchor="end">▰ 환산 포맷</text>' +
+      '<text class="v-cap" x="346" y="38" text-anchor="end">▱ 풀프레임</text>';
 
-    /* ===== 하단: 화각 부채꼴 ===== */
-    var ax = 180, ay = 338;                                 // 꼭지점
-    function ray(theta, r) {                                 // 수직축 기준 ±θ/2
+    /* ===== 하단: 화각 부채꼴 2개 (좌=풀프레임 / 우=환산 포맷) — 넓은 쪽이 위(북) ===== */
+    var apexY = 300;                                        // 두 부채꼴 공통 꼭지점 Y (아래, 위로 열림)
+    var R_DIAG = 80, R_LONG = 62, R_SHORT = 44;             // 중첩 반지름 (두 부채꼴 공유 → 직접 비교)
+    // 수직 상향축 기준 ±θ/2 로 벌어진 부채꼴 (위로 열림)
+    function ray(cx, theta, r) {
       var h = theta * Math.PI / 360;                         // θ/2 in rad
-      return { lx: ax - r * Math.sin(h), ly: ay - r * Math.cos(h),
-               rx: ax + r * Math.sin(h), ry: ay - r * Math.cos(h) };
+      return { lx: cx - r * Math.sin(h), rx: cx + r * Math.sin(h), y: apexY - r * Math.cos(h) };
     }
-    function wedge(theta, r, cls) {
-      var p = ray(theta, r);
-      var big = theta > 180 ? 1 : 0;
-      return '<path class="' + cls + '" d="M' + n(ax) + ' ' + n(ay) + ' L' + n(p.lx) + ' ' + n(p.ly) +
-        ' A' + n(r) + ' ' + n(r) + ' 0 ' + big + ' 1 ' + n(p.rx) + ' ' + n(p.ry) + ' Z"/>';
+    function wedge(cx, theta, r, cls) {
+      if (theta < 0.05) return "";                           // 0°(펼침 시작)에서는 부채꼴 생략
+      var p = ray(cx, theta, r), big = theta > 180 ? 1 : 0;
+      return '<path class="' + cls + '" d="M' + n(cx) + ' ' + n(apexY) + ' L' + n(p.lx) + ' ' + n(p.y) +
+        ' A' + n(r) + ' ' + n(r) + ' 0 ' + big + ' 1 ' + n(p.rx) + ' ' + n(p.y) + ' Z"/>';
     }
-    // 라벨은 각 링(부채꼴 띠) 중앙에 세로로 쌓아 겹치지 않게
-    function ringLabel(y, text, cls) {
-      return '<text class="v-ang ' + cls + '" x="' + ax + '" y="' + y + '" text-anchor="middle">' + esc(text) + '</text>';
+    // 한 꼭지점에 대각/장변/단변 부채꼴 + 축 + 꼭지점 점
+    // base: "v-fan"(환산 포맷, accent) | "v-fan-ff"(풀프레임, 회색 점선). stroke=base, fill=base-N
+    function fan(cx, aD, aL, aS, base) {
+      return '<line class="v-axis" x1="' + cx + '" y1="' + apexY + '" x2="' + cx + '" y2="' + n(apexY - R_DIAG) + '"/>' +
+        wedge(cx, aD, R_DIAG, base + " " + base + "-3") +
+        wedge(cx, aL, R_LONG, base + " " + base + "-2") +
+        wedge(cx, aS, R_SHORT, base + " " + base + "-1") +
+        '<circle class="' + (base === "v-fan" ? "v-apex" : "v-apex-ff") + '" cx="' + cx + '" cy="' + apexY + '" r="3.5"/>';
     }
+    // 꼭지점(아래) 아래쪽 라벨 묶음 (제목 + 대각/장변/단변)
+    function fanLabels(cx, title, titleCls, aD, aL, aS, angCls) {
+      return '<text class="' + titleCls + '" x="' + cx + '" y="318" text-anchor="middle">' + esc(title) + '</text>' +
+        '<text class="v-ang ' + angCls + '" x="' + cx + '" y="336" text-anchor="middle">' + esc("대각 " + n(aD) + "°") + '</text>' +
+        '<text class="v-ang ' + angCls + '" x="' + cx + '" y="354" text-anchor="middle">' + esc("장변 " + n(aL) + "°") + '</text>' +
+        '<text class="v-ang ' + angCls + '" x="' + cx + '" y="372" text-anchor="middle">' + esc("단변 " + n(aS) + "°") + '</text>';
+    }
+    var fmtCx = 264, ffCx = 96;
     var bottom =
-      '<line class="v-axis" x1="' + ax + '" y1="' + ay + '" x2="' + ax + '" y2="216"/>' +
-      wedge(aDiag, 120, "v-fan v-fan-3") +
-      wedge(aLong, 96, "v-fan v-fan-2") +
-      wedge(aShort, 72, "v-fan v-fan-1") +
-      '<circle class="v-apex" cx="' + ax + '" cy="' + ay + '" r="3.5"/>' +
-      ringLabel(232, "대각 " + n(aDiag) + "°", "v-ang-3") +
-      ringLabel(259, "장변 " + n(aLong) + "°", "v-ang-2") +
-      ringLabel(286, "단변 " + n(aShort) + "°", "v-ang-1") +
-      '<text class="v-sub" x="14" y="210">화각 (시야각)</text>';
+      '<text class="v-sub" x="14" y="212">화각 (시야각)</text>' +
+      fan(fmtCx, a[0], a[1], a[2], "v-fan") +
+      fan(ffCx, a[3], a[4], a[5], "v-fan-ff") +
+      fanLabels(fmtCx, "환산 포맷", "v-fan-title-fmt", a[0], a[1], a[2], "v-ang-2") +
+      fanLabels(ffCx, "풀프레임", "v-fan-title-ff", a[3], a[4], a[5], "v-ang-ff");
 
     $("viz").innerHTML = top + bottom;
+  }
+
+  function drawViz(f, focal) {
+    var ff = C.FF, diag = C.diag(f), ffDiag = C.diag(ff);
+    var L = Math.max(f.w, f.h), S = Math.min(f.w, f.h);
+    var fL = Math.max(ff.w, ff.h), fS = Math.min(ff.w, ff.h);
+    // 풀프레임 화각은 같은 물리 초점거리 기준(환산 초점 아님) → 크롭에 따른 화각 차이가 드러남
+    var target = [C.aov(diag, focal), C.aov(L, focal), C.aov(S, focal),
+                  C.aov(ffDiag, focal), C.aov(fL, focal), C.aov(fS, focal)];
+    var fmtChanged = f.id !== lastFmtId; lastFmtId = f.id;
+
+    if (REDUCED) { vizCur = { scale: 1, a: target }; renderViz(f, 1, target); return; }
+
+    // 포맷 변경/최초 → 0에서 등장. 값 변경 → 현재 표시값에서 이어서 보간(깜빡임 방지)
+    var from = (vizCur && !fmtChanged) ? vizCur : { scale: 0, a: [0, 0, 0, 0, 0, 0] };
+    // 변화 없음(조리개·거리 변경 등)이면 1회만 그리고 종료 — 불필요한 rAF 루프 방지
+    if (!fmtChanged && from.scale === 1 &&
+        target.every(function (v, i) { return Math.abs(v - from.a[i]) < 0.05; })) {
+      vizCur = { scale: 1, a: target }; renderViz(f, 1, target); return;
+    }
+    if (vizRAF) cancelAnimationFrame(vizRAF);
+    var t0 = performance.now(), DUR = 360;                  // 빠르고 부드럽게
+    (function frame(now) {
+      var p = Math.min(1, (now - t0) / DUR), e = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      vizCur = {
+        scale: from.scale + (1 - from.scale) * e,
+        a: target.map(function (v, i) { return from.a[i] + (v - from.a[i]) * e; })
+      };
+      renderViz(f, vizCur.scale, vizCur.a);
+      vizRAF = p < 1 ? requestAnimationFrame(frame) : null;
+    })(performance.now());
   }
 
   function escapeXml(s) {

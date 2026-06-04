@@ -222,6 +222,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px 
 .viz .v-diag-lbl { fill: var(--accent); font-size: 11px; font-weight: 600; }
 .viz .v-name { fill: var(--accent); font-size: 13px; font-weight: 800; }
 .viz .v-cap { fill: var(--muted); font-size: 11px; }
+.viz .v-cap-fmt { fill: var(--accent); font-size: 11px; font-weight: 700; }
 .viz .v-badge { fill: var(--accent); font-size: 12px; font-weight: 800; }
 
 /* 화각 부채꼴 */
@@ -239,6 +240,18 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px 
 .viz .v-ang-2 { fill: var(--accent); }
 .viz .v-ang-3 { fill: var(--accent); }
 .viz .v-sub { fill: var(--muted); font-size: 11px; font-weight: 700; }
+
+/* 풀프레임 부채꼴 — 회색 점선 (상단 FF 프레임과 톤 일치) */
+.viz .v-fan-ff { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.viz .v-fan-ff-1 { fill: color-mix(in srgb, var(--muted) 18%, transparent); }
+.viz .v-fan-ff-2 { fill: color-mix(in srgb, var(--muted) 11%, transparent); }
+.viz .v-fan-ff-3 { fill: color-mix(in srgb, var(--muted) 6%, transparent); }
+.viz .v-ang-ff { fill: var(--muted); }
+.viz .v-apex-ff { fill: var(--muted); }
+
+/* 부채꼴 제목 */
+.viz .v-fan-title-fmt { fill: var(--accent); font-size: 12px; font-weight: 800; }
+.viz .v-fan-title-ff { fill: var(--muted); font-size: 12px; font-weight: 800; }
 
 /* 데이터 주석 */
 .notes { margin-top: 26px; }
