@@ -152,26 +152,59 @@
     el.classList.add("is-bump"); if (item) item.classList.add("is-bump");
   }
 
-  // 이전값에서 새 값으로 숫자를 보간하며 렌더. render(v) → innerHTML 문자열.
-  function setStat(el, to, render) {
-    var hadPrev = el.dataset.num !== undefined && el.dataset.num !== "";
-    var from = hadPrev ? parseFloat(el.dataset.num) : to;
-    el.dataset.num = to;
-    if (!hadPrev || from === to || REDUCED) {
-      el.innerHTML = render(to);
-      if (hadPrev && from !== to) pulse(el);
+  /* ---------- 숫자 오도미터 (자릿수별 세로 롤링, 플립달력 느낌) ----------
+     CSS transform 트랜지션으로 각 자리의 0~9 스트립을 굴림. 값 변경 시 transform만 갱신해
+     현재 위치에서 새 위치로 부드럽게 보간(연속 드래그도 매끄럽게 리타기팅). */
+
+  // 한 자리 롤링 셀 생성: <span.odo-d><span.odo-r><b>0</b>…<b>9</b></span></span>
+  function makeDigitCell() {
+    var cell = document.createElement("span"); cell.className = "odo-d";
+    var roll = document.createElement("span"); roll.className = "odo-r";
+    for (var d = 0; d < 10; d++) { var b = document.createElement("b"); b.textContent = d; roll.appendChild(b); }
+    cell.appendChild(roll);
+    return { cell: cell, roll: roll };
+  }
+
+  // 모양(접두·자릿수·소수점 위치·단위)이 바뀔 때만 셀 구조를 재생성
+  function rebuildOdo(el, numStr, pre, unit, sig) {
+    el.innerHTML = "";
+    var rolls = [];
+    if (pre) { var p = document.createElement("span"); p.className = "odo-s"; p.textContent = pre; el.appendChild(p); }
+    var box = document.createElement("span"); box.className = "odo";
+    for (var i = 0; i < numStr.length; i++) {
+      var ch = numStr.charAt(i);
+      if (ch >= "0" && ch <= "9") {
+        var dc = makeDigitCell();
+        dc.roll.style.transform = "translateY(" + (-parseInt(ch, 10) * 10) + "%)";
+        box.appendChild(dc.cell); rolls.push(dc.roll);
+      } else {
+        var s = document.createElement("span"); s.className = "odo-s"; s.textContent = ch; box.appendChild(s);
+      }
+    }
+    el.appendChild(box);
+    if (unit) { var u = document.createElement("small"); u.textContent = " " + unit; el.appendChild(u); }
+    el._odo = { sig: sig, rolls: rolls };
+  }
+
+  // numStr: 숫자 문자열(고정 소수, 예 "43.7"). pre: 접두("f/"), unit: 단위("mm").
+  function setOdo(el, numStr, pre, unit) {
+    var sig = pre + "|" + numStr.replace(/\d/g, "#") + "|" + unit;
+    var prev = el._odo;
+    if (prev && prev.sig === sig) {            // 같은 모양 → 자릿수 스트립만 굴림
+      var changed = false, di = 0;
+      for (var i = 0; i < numStr.length; i++) {
+        var ch = numStr.charAt(i);
+        if (ch >= "0" && ch <= "9") {
+          var t = "translateY(" + (-parseInt(ch, 10) * 10) + "%)";
+          var roll = prev.rolls[di++];
+          if (roll.style.transform !== t) { roll.style.transform = t; changed = true; }
+        }
+      }
+      if (changed) pulse(el);
       return;
     }
-    pulse(el);
-    var start = performance.now(), dur = 380;
-    function frame(now) {
-      var p = Math.min(1, (now - start) / dur);
-      var e = 1 - Math.pow(1 - p, 3); // easeOutCubic
-      el.innerHTML = render(from + (to - from) * e);
-      if (p < 1) requestAnimationFrame(frame);
-      else el.innerHTML = render(to);
-    }
-    requestAnimationFrame(frame);
+    rebuildOdo(el, numStr, pre, unit, sig);
+    if (prev) pulse(el);                       // 최초(prev 없음)엔 펄스 생략
   }
 
   function update() {
@@ -184,9 +217,9 @@
     var ef = C.equivFocal(focal, f);
     var eN = C.equivAperture(N, f);
 
-    setStat($("r-focal"), ef, function (v) { return fmtNum(v, 1) + "<small> mm</small>"; });
+    setOdo($("r-focal"), ef.toFixed(1), "", "mm");
     $("r-focal-sub").textContent = (f.ref ? "기준 포맷" : focal + "mm × " + crop.toFixed(3) + " 크롭");
-    setStat($("r-aperture"), eN, function (v) { return "f/" + fmtNum(v, 1); });
+    setOdo($("r-aperture"), eN.toFixed(1), "f/", "");
     $("r-aperture-sub").textContent = "심도·배경흐림이 FF 환산값과 동일";
 
     $("est-flag").innerHTML = f.est ? '<span class="badge-est">추정 데이터</span>' : "";
