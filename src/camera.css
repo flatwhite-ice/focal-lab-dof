@@ -24,7 +24,8 @@
   height: 100%;
 }
 
-#cam-video { object-fit: cover; background: #000; }
+/* 센서 프레임 전체를 레터박스로 표시(잘림 없음) → 오버레이가 영상 프레임에 정확히 매핑됨 */
+#cam-video { object-fit: contain; background: #000; }
 #cam-canvas { pointer-events: none; }
 
 /* ---------- 상단 실시간 수치 ---------- */

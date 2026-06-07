@@ -1,6 +1,12 @@
-/* Focal Lab · 카메라 화각 오버레이 와이어링.
-   convert.js(Convert), formats.js(FORMATS) 의존. 라이브뷰 위에 환산 포맷 / 풀프레임
-   프레이밍 가이드를 canvas로 그린다. 각도는 전부 Convert.aov 등 순수 엔진으로 계산. */
+/* Focal Lab · 카메라 화각 오버레이(뷰파인더) 와이어링.
+   convert.js(Convert), formats.js(FORMATS) 의존.
+
+   정확도 설계:
+   - video는 object-fit: contain → 센서 프레임 '전체'를 레터박스로 표시(잘림 없음).
+     덕분에 오버레이를 영상 프레임 좌표에 정확히 매핑할 수 있다.
+   - 기준 카메라는 formats.js의 실제 폰 렌즈(센서 w/h + 실초점)를 선택 → 추측 제거.
+   - 영상 실제 종횡비/방향을 반영해 카메라 화각을 계산하고, 직선투영(tan 비)으로 박스 크기 결정.
+   - 선택 포맷 프레임 밖을 어둡게(뷰파인더 마스크). 미세 오차는 정밀 보정(±)으로 흡수. */
 (function () {
   "use strict";
 
@@ -10,7 +16,8 @@
 
   var fmtSel = $("cam-format"), noteEl = $("cam-format-note");
   var focalNum = $("cam-focal"), focalRange = $("cam-focal-range");
-  var calRange = $("cam-cal"), calVal = $("cam-cal-val");
+  var refSel = $("cam-ref");
+  var corrRange = $("cam-corr"), corrVal = $("cam-corr-val");
   var video = $("cam-video"), canvas = $("cam-canvas"), ctx = canvas.getContext("2d");
   var readout = $("cam-readout"), warnEl = $("cam-warn");
   var msg = $("cam-msg"), msgText = $("cam-msg-text"), startBtn = $("cam-start");
@@ -31,15 +38,44 @@
     fmtSel.appendChild(og);
   });
 
-  /* ---------- 상태 & 영속화 (메인 앱과 공유) ---------- */
-  var INPUTS_KEY = "focal-lab-inputs";   // 포맷·초점 (app.js와 동일)
-  var CAM_KEY = "focal-lab-cam";         // 기준 카메라 보정값(환산 초점거리)
+  /* ---------- 기준 카메라(폰 렌즈) 목록 ----------
+     focal(실초점)이 정의된 엔트리만 = 폰 렌즈. id 충돌 가능성이 있어 배열 인덱스를 값으로 사용. */
+  var PHONES = [];
+  window.FORMATS.forEach(function (g) {
+    var phones = g.items.filter(function (f) { return f.focal != null; });
+    if (!phones.length) return;
+    var og = document.createElement("optgroup");
+    og.label = g.group;
+    phones.forEach(function (f) {
+      var idx = PHONES.push(f) - 1;
+      var o = document.createElement("option");
+      o.value = String(idx); o.textContent = f.name;
+      og.appendChild(o);
+    });
+    refSel.appendChild(og);
+  });
+
+  function findPhone(pred) {
+    for (var i = 0; i < PHONES.length; i++) if (pred(PHONES[i].name)) return i;
+    return -1;
+  }
+  // 기본 기준 렌즈: 17 Pro 초광각 → 임의 초광각 → 첫 폰
+  var DEFAULT_REF = (function () {
+    var i = findPhone(function (n) { return /17\s*pro/i.test(n) && /초광각/.test(n); });
+    if (i < 0) i = findPhone(function (n) { return /초광각/.test(n); });
+    if (i < 0) i = 0;
+    return i;
+  })();
+
+  /* ---------- 상태 & 영속화 ---------- */
+  var INPUTS_KEY = "focal-lab-inputs";   // 포맷·초점 (app.js와 공유)
+  var CAM_KEY = "focal-lab-cam";         // { ref:<phone name>, corr:<배율> }
 
   var clampFocal = function (v) { return Math.min(600, Math.max(1, v)); };
-  var clampCal = function (v) { return Math.min(80, Math.max(10, v)); };
+  var clampCorr = function (v) { return Math.min(1.6, Math.max(0.6, v)); };
 
-  var state = { fmtId: "6x6", focal: 80, camEquiv: 26 };
-  var hasSavedCam = false;   // 사용자가 보정값을 저장한 적 있으면 자동선택이 덮어쓰지 않음
+  var state = { fmtId: "6x6", focal: 80, ref: DEFAULT_REF, corr: 1 };
+  var hasSavedRef = false;   // 사용자가 기준 렌즈를 고른 적 있으면 자동선택이 덮어쓰지 않음
 
   (function loadState() {
     try {
@@ -48,13 +84,18 @@
       if (s && isFinite(parseFloat(s.focal))) state.focal = clampFocal(parseFloat(s.focal));
     } catch (e) {}
     try {
-      var cam = parseFloat(localStorage.getItem(CAM_KEY));
-      if (isFinite(cam)) { state.camEquiv = clampCal(cam); hasSavedCam = true; }
+      var c = JSON.parse(localStorage.getItem(CAM_KEY));
+      if (c && typeof c === "object") {
+        if (c.ref) {
+          var i = findPhone(function (n) { return n === c.ref; });
+          if (i >= 0) { state.ref = i; hasSavedRef = true; }
+        }
+        if (isFinite(parseFloat(c.corr))) state.corr = clampCorr(parseFloat(c.corr));
+      }
     } catch (e) {}
   })();
 
   function saveInputs() {
-    // 메인 앱 저장 형태를 보존하며 포맷·초점만 갱신 (다른 필드는 유지)
     var obj = {};
     try { obj = JSON.parse(localStorage.getItem(INPUTS_KEY)) || {}; } catch (e) {}
     if (typeof obj !== "object" || !obj) obj = {};
@@ -63,117 +104,133 @@
     try { localStorage.setItem(INPUTS_KEY, JSON.stringify(obj)); } catch (e) {}
   }
   function saveCam() {
-    try { localStorage.setItem(CAM_KEY, String(state.camEquiv)); } catch (e) {}
+    try { localStorage.setItem(CAM_KEY, JSON.stringify({ ref: PHONES[state.ref].name, corr: state.corr })); } catch (e) {}
   }
 
-  // 컨트롤 초기값 반영
+  // 컨트롤 초기값
   fmtSel.value = state.fmtId;
   focalNum.value = state.focal;
   focalRange.value = state.focal;
-  calRange.value = state.camEquiv;
+  refSel.value = String(state.ref);
+  corrRange.value = state.corr;
 
-  /* ---------- 메타 표기 (포맷 주석 · 핸들 요약) ---------- */
+  /* ---------- 메타 표기 ---------- */
   function curFmt() { return INDEX[state.fmtId] || INDEX["6x6"]; }
   function updateNote() {
     var f = curFmt();
     noteEl.textContent = f.note ? (f.est ? "추정 · " : "") + f.note : "";
   }
-  function updateSummary() {
-    summaryEl.textContent = curFmt().name + " · " + state.focal + "mm";
+  function updateSummary() { summaryEl.textContent = curFmt().name + " · " + state.focal + "mm"; }
+  function updateCorrLabel() {
+    var pct = Math.round((state.corr - 1) * 100);
+    corrVal.textContent = (pct > 0 ? "+" : "") + pct + "%";
   }
-  updateNote(); updateSummary();
+  updateNote(); updateSummary(); updateCorrLabel();
 
-  /* ---------- 카메라 화각(기준) ----------
-     camEquiv(환산 초점거리)로 카메라 전체 프레임의 화각을 구한 뒤,
-     object-fit: cover 크롭을 반영해 "화면에 실제 보이는" 수평/수직 화각을 산출.
-     모든 위치는 tan(각도)에 선형이므로 크롭은 tan 값에 비례 적용. */
-  function cameraFOV(W, H) {
-    var aScreen = W / H;
-    var vW = video.videoWidth, vH = video.videoHeight;
-    var aVideo = (vW && vH) ? vW / vH : aScreen;     // 영상 없으면 화면비로 폴백
-    // 모바일: 가로 영상이 세로 화면에 회전 표시되는 경우가 많음 → 방향 정규화
-    if ((aVideo > 1) !== (aScreen > 1)) aVideo = 1 / aVideo;
-
-    var diagFOV = C.aov(C.FF_DIAG, state.camEquiv);  // 대각 화각(도)
-    var halfDiagTan = Math.tan(diagFOV / 2 * RAD);
-    // 전체 영상 프레임의 h/v (영상 종횡비 기준)
-    var tanFullH = halfDiagTan * aVideo / Math.hypot(aVideo, 1);
-    var tanFullV = halfDiagTan / Math.hypot(aVideo, 1);
-    // cover 크롭 → 보이는 FOV (넓은 쪽이 잘림)
-    var tanVisH, tanVisV;
-    if (aVideo >= aScreen) { tanVisH = tanFullH * (aScreen / aVideo); tanVisV = tanFullV; }
-    else { tanVisH = tanFullH; tanVisV = tanFullV * (aVideo / aScreen); }
-    return { h: 2 * Math.atan(tanVisH) / RAD, v: 2 * Math.atan(tanVisV) / RAD };
+  /* ---------- 카메라(기준 렌즈) 화각 ----------
+     영상 프레임의 수평/수직 화각을 element 좌표 기준으로 산출.
+     ref 폰 렌즈의 센서 w/h(4:3, 가로기준)와 실초점으로 계산하고,
+     영상 종횡비(센서 크롭)와 element 방향(가로/세로)을 반영. */
+  function cameraFOV(vw, vh) {
+    var r = PHONES[state.ref] || PHONES[DEFAULT_REF];
+    var fp = r.focal;
+    var sLong = Math.max(r.w, r.h), sShort = Math.min(r.w, r.h);  // 센서 가로/세로(mm)
+    var sensorAspect = sLong / sShort;
+    // 영상 프레임 종횡비(가로:세로 = 긴변:짧은변)
+    var aLS = (vw && vh) ? Math.max(vw, vh) / Math.min(vw, vh) : sensorAspect;
+    // 영상이 센서를 어떻게 크롭하는지 → 실제 사용된 센서 변 길이
+    var effLong, effShort;
+    if (aLS >= sensorAspect) { effLong = sLong; effShort = sLong / aLS; }  // 더 와이드 → 위아래 크롭
+    else { effShort = sShort; effLong = sShort * aLS; }                    // 더 정사각 → 좌우 크롭
+    var Flong = C.aov(effLong, fp), Fshort = C.aov(effShort, fp);
+    // element 방향에 맞춰 h/v 매핑 (세로영상이면 짧은변이 수평)
+    var landscape = (vw >= vh);
+    return { h: landscape ? Flong : Fshort, v: landscape ? Fshort : Flong, name: r.name };
   }
 
-  /* ---------- 캔버스 측정 (DPR 대응) ---------- */
+  /* ---------- 캔버스 측정 ---------- */
   var cssW = 0, cssH = 0;
   function measure() {
-    var r = canvas.getBoundingClientRect();
-    cssW = r.width; cssH = r.height;
+    var rc = canvas.getBoundingClientRect();
+    cssW = rc.width; cssH = rc.height;
     var dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  // contain: 영상 프레임이 스테이지 안에 들어가도록 레터박스된 표시 사각형
+  function videoRect() {
+    var vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return { x: 0, y: 0, w: cssW, h: cssH, vw: cssW || 1, vh: cssH || 1, live: false };
+    var scale = Math.min(cssW / vw, cssH / vh);
+    var w = vw * scale, h = vh * scale;
+    return { x: (cssW - w) / 2, y: (cssH - h) / 2, w: w, h: h, vw: vw, vh: vh, live: true };
+  }
+
   /* ---------- 렌더 ---------- */
   function accent() {
     return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2b6cff";
   }
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; });
+  }
 
-  // 중앙 정렬 사각형. frac>1이면 화면 밖 → 화면에 클램프(점선이 잘림). over 반환.
-  function drawBox(tH, tV, cam, color, dash, lineW, label) {
-    var fracW = Math.tan(tH / 2 * RAD) / Math.tan(cam.h / 2 * RAD);
-    var fracV = Math.tan(tV / 2 * RAD) / Math.tan(cam.v / 2 * RAD);
+  // 영상 사각형(rect) 안에서, 카메라화각(cam) 대비 목표화각(tH,tV)이 차지하는 박스
+  function boxFor(rect, cam, tH, tV) {
+    var fracW = Math.tan(tH / 2 * RAD) / (Math.tan(cam.h / 2 * RAD) * state.corr);
+    var fracV = Math.tan(tV / 2 * RAD) / (Math.tan(cam.v / 2 * RAD) * state.corr);
     var over = fracW > 1 || fracV > 1;
-    var w = Math.min(fracW, 1) * cssW;
-    var h = Math.min(fracV, 1) * cssH;
-    var x = (cssW - w) / 2, y = (cssH - h) / 2;
-
+    var w = Math.min(fracW, 1) * rect.w, h = Math.min(fracV, 1) * rect.h;
+    return { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w: w, h: h, over: over };
+  }
+  function strokeBox(b, color, dash, lw, label) {
     ctx.save();
-    ctx.lineWidth = lineW;
-    ctx.strokeStyle = color;
-    ctx.setLineDash(dash || []);
-    ctx.shadowColor = "rgba(0,0,0,.6)"; ctx.shadowBlur = 4;
-    ctx.strokeRect(x + lineW / 2, y + lineW / 2, Math.max(0, w - lineW), Math.max(0, h - lineW));
+    ctx.lineWidth = lw; ctx.strokeStyle = color; ctx.setLineDash(dash || []);
+    ctx.shadowColor = "rgba(0,0,0,.7)"; ctx.shadowBlur = 4;
+    ctx.strokeRect(b.x + lw / 2, b.y + lw / 2, Math.max(0, b.w - lw), Math.max(0, b.h - lw));
     ctx.restore();
-
-    // 라벨 (박스 좌상단 안쪽)
     if (label) {
       ctx.save();
       ctx.font = "700 12px " + getComputedStyle(document.body).fontFamily;
-      ctx.textBaseline = "top";
-      ctx.shadowColor = "rgba(0,0,0,.85)"; ctx.shadowBlur = 3;
-      ctx.fillStyle = color;
-      var lx = Math.max(4, x + 6), ly = Math.max(4, y + 6);
-      ctx.fillText(label, lx, ly);
+      ctx.textBaseline = "top"; ctx.fillStyle = color;
+      ctx.shadowColor = "rgba(0,0,0,.9)"; ctx.shadowBlur = 3;
+      ctx.fillText(label, Math.max(4, b.x + 6), Math.max(4, b.y + 6));
       ctx.restore();
     }
-    return over;
   }
 
   function render() {
     if (!cssW || !cssH) measure();
     ctx.clearRect(0, 0, cssW, cssH);
 
-    var f = INDEX[state.fmtId] || INDEX["6x6"];
-    var focal = state.focal;
-    var cam = cameraFOV(cssW, cssH);
-    // 보정 슬라이더 라벨에 실제 보이는 가로 화각 표기 (캘리브레이션 참고)
-    calVal.textContent = state.camEquiv + "mm · 가로 " + cam.h.toFixed(0) + "°";
+    var rect = videoRect();
+    var cam = cameraFOV(rect.vw, rect.vh);
+    var f = curFmt(), focal = state.focal;
 
+    // 표시 방향(가로/세로)에 맞춰 포맷 장변=긴축 정렬
+    var dispLandscape = rect.w >= rect.h;
     var fmtLong = Math.max(f.w, f.h), fmtShort = Math.min(f.w, f.h);
+    var tLong = C.aov(fmtLong, focal), tShort = C.aov(fmtShort, focal);
+    var ffLong = C.aov(36, focal), ffShort = C.aov(24, focal);
+    var fmtBox = boxFor(rect, cam, dispLandscape ? tLong : tShort, dispLandscape ? tShort : tLong);
+    var ffBox = boxFor(rect, cam, dispLandscape ? ffLong : ffShort, dispLandscape ? ffShort : ffLong);
 
-    // 풀프레임 (회색 점선) — 같은 물리 초점 기준
-    drawBox(C.aov(36, focal), C.aov(24, focal), cam, "#ffffff", [7, 6], 2, "풀프레임");
-    // 환산 포맷 (accent 실선)
-    var over = drawBox(C.aov(fmtLong, focal), C.aov(fmtShort, focal), cam, accent(), [], 3, f.name);
+    // 뷰파인더 마스크: 전체를 어둡게 → 선택 포맷 박스만 투명(라이브뷰 노출)
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.5)";
+    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.clearRect(fmtBox.x, fmtBox.y, fmtBox.w, fmtBox.h);
+    ctx.restore();
+
+    // 풀프레임(흰 점선) → 환산 포맷(accent 실선) 순으로
+    strokeBox(ffBox, "#ffffff", [7, 6], 2, "풀프레임");
+    strokeBox(fmtBox, accent(), [], 3, f.name);
 
     // 중앙 십자
     ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 1;
-    var cx = cssW / 2, cy = cssH / 2;
+    ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 1;
+    var cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
     ctx.beginPath();
     ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy);
     ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10);
@@ -181,46 +238,30 @@
     ctx.restore();
 
     // 상단 수치
-    var ef = C.equivFocal(focal, f);
-    var ang = C.angles(focal, f);
-    var ffAng = C.angles(focal, C.FF);
+    var ef = C.equivFocal(focal, f), ang = C.angles(focal, f);
     readout.innerHTML =
-      '<span class="ro-fmt">' + esc(f.name) + '</span>' +
-      '<span>물리 <b>' + focal + 'mm</b></span>' +
-      '<span>환산 <b>' + ef.toFixed(1) + 'mm</b></span>' +
-      '<span>화각 <b>' + ang.d.toFixed(1) + '°</b> (대각)</span>' +
-      '<span class="ro-ff">풀프레임 ' + ffAng.d.toFixed(1) + '°</span>';
+      '<span class="ro-fmt">' + esc(f.name) + ' · ' + focal + 'mm → 환산 ' + ef.toFixed(1) + 'mm</span>' +
+      '<span>포맷 화각 <b>' + ang.d.toFixed(1) + '°</b></span>' +
+      '<span class="ro-ff">기준 ' + esc(cam.name) + ' · 화면 ' + cam.h.toFixed(0) + '°×' + cam.v.toFixed(0) + '°</span>';
 
-    // 넓은 화각 경고
-    if (over) {
+    if (fmtBox.over) {
       warnEl.hidden = false;
-      warnEl.textContent = "선택 화각이 기준 카메라보다 넓습니다 — 보정값을 넓히거나 더 넓은 렌즈가 필요해요.";
-    } else {
-      warnEl.hidden = true;
-    }
+      warnEl.textContent = "선택 화각이 기준 렌즈보다 넓어 화면에 다 담기지 않습니다 — 더 넓은 렌즈를 쓰거나 초점거리를 늘려보세요.";
+    } else { warnEl.hidden = true; }
   }
 
-  function esc(s) {
-    return String(s).replace(/[&<>]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
-    });
-  }
-
-  // rAF 디바운스 렌더
   var rafId = null;
   function scheduleRender() {
     if (rafId) return;
     rafId = requestAnimationFrame(function () { rafId = null; render(); });
   }
 
-  /* ---------- 입력 와이어링 (환산기 콤보 패턴) ---------- */
+  /* ---------- 입력 와이어링 ---------- */
   function onInputChange() { updateSummary(); saveInputs(); scheduleRender(); }
 
   fmtSel.addEventListener("change", function () {
-    state.fmtId = fmtSel.value;
-    updateNote(); onInputChange();
+    state.fmtId = fmtSel.value; updateNote(); onInputChange();
   });
-  // 숫자입력 ↔ 슬라이더 양방향 (app.js link() 패턴)
   focalNum.addEventListener("input", function () {
     var v = parseFloat(focalNum.value);
     if (isFinite(v)) { state.focal = clampFocal(v); focalRange.value = state.focal; }
@@ -228,16 +269,18 @@
   });
   focalRange.addEventListener("input", function () {
     state.focal = clampFocal(parseFloat(focalRange.value));
-    focalNum.value = state.focal;
-    onInputChange();
+    focalNum.value = state.focal; onInputChange();
   });
-  calRange.addEventListener("input", function () {
-    state.camEquiv = clampCal(parseFloat(calRange.value));
-    hasSavedCam = true;
-    saveCam(); scheduleRender();   // calVal은 render에서 갱신
+  refSel.addEventListener("change", function () {
+    state.ref = parseInt(refSel.value, 10) || 0;
+    hasSavedRef = true; saveCam(); scheduleRender();
+    switchPhysicalForRef(PHONES[state.ref].name);   // 실제 카메라도 best-effort 전환
+  });
+  corrRange.addEventListener("input", function () {
+    state.corr = clampCorr(parseFloat(corrRange.value));
+    updateCorrLabel(); saveCam(); scheduleRender();
   });
 
-  // 패널 접기/펼치기
   handle.addEventListener("click", function () {
     var collapsed = panel.classList.toggle("is-collapsed");
     handle.setAttribute("aria-expanded", String(!collapsed));
@@ -249,15 +292,7 @@
   });
 
   /* ---------- 카메라 시작 / 렌즈 전환 ---------- */
-  var stream = null, currentDeviceId = null, currentLabel = "", autoPicked = false;
-
-  // 보정값을 환산 초점거리로 자동 설정 — 저장하지 않음(저장은 사용자 수동 조절 때만).
-  // 이렇게 해야 다음 방문에도 '렌즈에 맞춘 자동값'이 우선되고, 수동 미세조정만 영속화됨.
-  function applyCal(equiv) {
-    state.camEquiv = clampCal(equiv);
-    calRange.value = state.camEquiv;
-    scheduleRender();
-  }
+  var stream = null, currentDeviceId = null, autoPicked = false;
 
   function showMsg(text, btnLabel) {
     msgText.textContent = text;
@@ -265,23 +300,19 @@
     if (btnLabel) startBtn.textContent = btnLabel;
     msg.hidden = false;
   }
-
   function stopStream() {
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
   }
-
-  // 렌즈 라벨에서 환산 초점거리 추정 (전환 시 보정값 기본값으로 사용)
-  function guessEquiv(label) {
-    var l = (label || "").toLowerCase();
-    if (l.indexOf("ultra") >= 0 || l.indexOf("초광각") >= 0) return 13;   // 0.5× 초광각
-    if (l.indexOf("tele") >= 0 || l.indexOf("망원") >= 0) return 77;       // 망원
-    return 26;                                                             // 광각/메인 기본
+  function lensType(s) {
+    s = (s || "").toLowerCase();
+    if (/ultra|초광각/.test(s)) return "ultra";
+    if (/tele|망원/.test(s)) return "tele";
+    return "wide";
   }
 
-  // deviceId 지정 시 해당 렌즈로, 없으면 후면 카메라. autoCal=true면 렌즈에 맞춰 보정값 갱신.
-  function startCamera(deviceId, autoCal) {
+  function startCamera(deviceId) {
     if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-      showMsg("이 브라우저는 카메라를 지원하지 않거나 보안 컨텍스트(HTTPS/localhost)가 아닙니다. 가이드 수치는 계속 확인할 수 있어요.", null);
+      showMsg("이 브라우저는 카메라를 지원하지 않거나 보안 컨텍스트(HTTPS/localhost)가 아닙니다. 오버레이 수치는 계속 확인할 수 있어요.", null);
       return;
     }
     showMsg("카메라를 켜는 중…", null);
@@ -296,65 +327,76 @@
       var track = s.getVideoTracks()[0];
       var st = (track && track.getSettings) ? track.getSettings() : {};
       currentDeviceId = st.deviceId || deviceId || null;
-      currentLabel = (track && track.label) || "";
-      if (autoCal) applyCal(guessEquiv(currentLabel));
       populateDevices();
-      // 최초(후면 기본) 시작이면 가장 넓은 렌즈로 자동 전환
-      if (deviceId === undefined) autoSelectWidest();
+      if (deviceId === undefined) autoSelectWidest();   // 최초: 가장 넓은 렌즈로
       measure(); render();
     }).catch(function (err) {
       var name = err && err.name;
       var t = "카메라를 시작할 수 없습니다.";
       if (name === "NotAllowedError" || name === "SecurityError") t = "카메라 권한이 거부되었습니다. 브라우저 설정에서 허용 후 다시 시도하세요.";
       else if (name === "NotFoundError" || name === "OverconstrainedError") t = "선택한 렌즈/카메라를 사용할 수 없습니다.";
-      showMsg(t + " (가이드 수치는 계속 확인 가능)", "다시 시도");
+      showMsg(t + " (오버레이 수치는 계속 확인 가능)", "다시 시도");
     });
   }
 
-  // 권한 허용 후 사용 가능한 카메라(렌즈) 목록 → 2개 이상이면 선택 노출
+  function getCams() {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices))
+      return Promise.resolve([]);
+    return navigator.mediaDevices.enumerateDevices().then(function (list) {
+      return list.filter(function (d) { return d.kind === "videoinput"; });
+    }).catch(function () { return []; });
+  }
+
   function populateDevices() {
-    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) return;
-    navigator.mediaDevices.enumerateDevices().then(function (list) {
-      var cams = list.filter(function (d) { return d.kind === "videoinput"; });
+    getCams().then(function (cams) {
       if (cams.length <= 1) { devField.hidden = true; return; }
       devSel.innerHTML = "";
       cams.forEach(function (d, i) {
         var o = document.createElement("option");
-        o.value = d.deviceId;
-        o.textContent = d.label || ("카메라 " + (i + 1));
+        o.value = d.deviceId; o.textContent = d.label || ("카메라 " + (i + 1));
         devSel.appendChild(o);
       });
       if (currentDeviceId) devSel.value = currentDeviceId;
       devField.hidden = false;
-    }).catch(function () {});
+    });
   }
 
-  // 시작 후 한 번: 사용 가능한 가장 넓은(초광각) 후면 렌즈로 자동 전환
+  // 최초 1회: 가장 넓은(초광각) 후면 렌즈로 전환 + 기준 렌즈 기본값을 초광각으로
   function autoSelectWidest() {
     if (autoPicked) return;
     autoPicked = true;
-    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) return;
-    navigator.mediaDevices.enumerateDevices().then(function (list) {
-      var ultra = list.filter(function (d) {
-        return d.kind === "videoinput" && /ultra|초광각/i.test(d.label);
-      });
+    getCams().then(function (cams) {
+      var ultra = cams.filter(function (d) { return lensType(d.label) === "ultra"; });
       if (ultra.length && ultra[0].deviceId && ultra[0].deviceId !== currentDeviceId) {
-        startCamera(ultra[0].deviceId, !hasSavedCam);   // 초광각으로 전환 (보정 자동, 저장값은 보호)
-      } else if (!hasSavedCam) {
-        applyCal(guessEquiv(currentLabel));             // 이미 최광각 → 현재 렌즈로 보정 추정
+        startCamera(ultra[0].deviceId);
       }
-    }).catch(function () {});
+      if (!hasSavedRef) {   // 사용자가 기준을 안 골랐으면 초광각 기본
+        var i = findPhone(function (n) { return /초광각/.test(n); });
+        if (i >= 0) { state.ref = i; refSel.value = String(i); scheduleRender(); }
+      }
+    });
   }
 
-  devSel.addEventListener("change", function () { startCamera(devSel.value, true); });
-  startBtn.addEventListener("click", function () { startCamera(); });
-  // 영상 메타데이터/크기 확정 시 정확한 종횡비로 다시 그림
-  video.addEventListener("loadedmetadata", function () { measure(); render(); });
+  // 기준 렌즈 선택에 맞춰 실제 카메라 장치를 best-effort 전환
+  function switchPhysicalForRef(refName) {
+    var want = lensType(refName);
+    getCams().then(function (cams) {
+      var match = null;
+      for (var i = 0; i < cams.length; i++) {
+        var t = lensType(cams[i].label);
+        if (t === want) { match = cams[i]; break; }
+        if (want === "wide" && t === "wide" && !match) match = cams[i];
+      }
+      if (match && match.deviceId && match.deviceId !== currentDeviceId) startCamera(match.deviceId);
+    });
+  }
 
-  // 페이지를 떠날 때 트랙 정리
+  devSel.addEventListener("change", function () { startCamera(devSel.value); });
+  startBtn.addEventListener("click", function () { startCamera(); });
+  video.addEventListener("loadedmetadata", function () { measure(); render(); });
   window.addEventListener("pagehide", stopStream);
 
-  /* ---------- 초기 렌더 (영상 없이도 가이드/수치 표시) ---------- */
+  /* ---------- 초기 렌더 ---------- */
   measure();
   render();
 })();

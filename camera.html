@@ -41,11 +41,6 @@
           <div class="hint" id="cam-format-note"></div>
         </div>
 
-        <div class="field" id="cam-device-field" hidden>
-          <label for="cam-device">카메라 (렌즈)</label>
-          <select id="cam-device" aria-label="카메라 선택"></select>
-        </div>
-
         <div class="field">
           <label for="cam-focal">초점거리</label>
           <div class="combo">
@@ -56,12 +51,22 @@
           </div>
         </div>
 
+        <div class="field">
+          <label for="cam-ref">내 폰 카메라 (렌즈)</label>
+          <select id="cam-ref" aria-label="기준 카메라 렌즈 선택"></select>
+          <div class="hint">라이브뷰의 실제 화각 기준. 정확히 고를수록 오버레이가 뷰파인더처럼 맞습니다.</div>
+        </div>
+
         <details class="advanced" id="cam-advanced">
-          <summary>고급 · 기준 카메라 보정</summary>
+          <summary>고급 · 정밀 보정 · 장치</summary>
           <div class="field">
-            <label for="cam-cal">내 폰 카메라 화각 <output id="cam-cal-val">26mm</output></label>
-            <input type="range" id="cam-cal" min="10" max="80" step="0.5" value="26" aria-label="기준 카메라 화각 보정">
-            <p class="hint">라이브뷰와 가이드가 어긋나면 조절 · 렌즈를 바꾸면 자동 설정됩니다.</p>
+            <label for="cam-corr">정밀 보정 <output id="cam-corr-val">0%</output></label>
+            <input type="range" id="cam-corr" min="0.6" max="1.6" step="0.01" value="1" aria-label="정밀 보정">
+            <p class="hint">오버레이가 실제보다 작으면 −, 크면 + 쪽으로 미세조정.</p>
+          </div>
+          <div class="field" id="cam-device-field" hidden>
+            <label for="cam-device">실제 카메라 장치</label>
+            <select id="cam-device" aria-label="카메라 장치 선택"></select>
           </div>
         </details>
 
