@@ -14,6 +14,7 @@
   var video = $("cam-video"), canvas = $("cam-canvas"), ctx = canvas.getContext("2d");
   var readout = $("cam-readout"), warnEl = $("cam-warn");
   var msg = $("cam-msg"), msgText = $("cam-msg-text"), startBtn = $("cam-start");
+  var devSel = $("cam-device"), devField = $("cam-device-field");
 
   /* ---------- 포맷 인덱스 + 셀렉트 (app.js 패턴 재사용) ---------- */
   var INDEX = {};
@@ -68,18 +69,27 @@
   focalRange.value = state.focal;
   calRange.value = state.camEquiv;
 
-  /* ---------- 카메라 화각(기준) ---------- */
-  // camEquiv(환산 초점거리)와 화면 종횡비로 카메라의 수평/수직 화각을 산출.
+  /* ---------- 카메라 화각(기준) ----------
+     camEquiv(환산 초점거리)로 카메라 전체 프레임의 화각을 구한 뒤,
+     object-fit: cover 크롭을 반영해 "화면에 실제 보이는" 수평/수직 화각을 산출.
+     모든 위치는 tan(각도)에 선형이므로 크롭은 tan 값에 비례 적용. */
   function cameraFOV(W, H) {
     var aScreen = W / H;
-    var diagFOV = C.aov(C.FF_DIAG, state.camEquiv);          // 대각 화각(도)
+    var vW = video.videoWidth, vH = video.videoHeight;
+    var aVideo = (vW && vH) ? vW / vH : aScreen;     // 영상 없으면 화면비로 폴백
+    // 모바일: 가로 영상이 세로 화면에 회전 표시되는 경우가 많음 → 방향 정규화
+    if ((aVideo > 1) !== (aScreen > 1)) aVideo = 1 / aVideo;
+
+    var diagFOV = C.aov(C.FF_DIAG, state.camEquiv);  // 대각 화각(도)
     var halfDiagTan = Math.tan(diagFOV / 2 * RAD);
-    var wFrac = aScreen / Math.hypot(aScreen, 1);
-    var hFrac = 1 / Math.hypot(aScreen, 1);
-    return {
-      h: 2 * Math.atan(halfDiagTan * wFrac) / RAD,
-      v: 2 * Math.atan(halfDiagTan * hFrac) / RAD
-    };
+    // 전체 영상 프레임의 h/v (영상 종횡비 기준)
+    var tanFullH = halfDiagTan * aVideo / Math.hypot(aVideo, 1);
+    var tanFullV = halfDiagTan / Math.hypot(aVideo, 1);
+    // cover 크롭 → 보이는 FOV (넓은 쪽이 잘림)
+    var tanVisH, tanVisV;
+    if (aVideo >= aScreen) { tanVisH = tanFullH * (aScreen / aVideo); tanVisV = tanFullV; }
+    else { tanVisH = tanFullH; tanVisV = tanFullV * (aVideo / aScreen); }
+    return { h: 2 * Math.atan(tanVisH) / RAD, v: 2 * Math.atan(tanVisV) / RAD };
   }
 
   /* ---------- 캔버스 측정 (DPR 대응) ---------- */
@@ -136,6 +146,8 @@
     var f = INDEX[state.fmtId] || INDEX["6x6"];
     var focal = state.focal;
     var cam = cameraFOV(cssW, cssH);
+    // 보정 슬라이더 라벨에 실제 보이는 가로 화각 표기 (캘리브레이션 참고)
+    calVal.textContent = state.camEquiv + "mm · 가로 " + cam.h.toFixed(0) + "°";
 
     var fmtLong = Math.max(f.w, f.h), fmtShort = Math.min(f.w, f.h);
 
@@ -212,8 +224,9 @@
     setTimeout(function () { measure(); scheduleRender(); }, 250);
   });
 
-  /* ---------- 카메라 시작 ---------- */
-  var stream = null;
+  /* ---------- 카메라 시작 / 렌즈 전환 ---------- */
+  var stream = null, currentDeviceId = null;
+
   function showMsg(text, btnLabel) {
     msgText.textContent = text;
     startBtn.hidden = !btnLabel;
@@ -221,36 +234,76 @@
     msg.hidden = false;
   }
 
-  function startCamera() {
+  function stopStream() {
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+  }
+
+  // 렌즈 라벨에서 환산 초점거리 추정 (전환 시 보정값 기본값으로 사용)
+  function guessEquiv(label) {
+    var l = (label || "").toLowerCase();
+    if (l.indexOf("ultra") >= 0 || l.indexOf("초광각") >= 0) return 13;   // 0.5× 초광각
+    if (l.indexOf("tele") >= 0 || l.indexOf("망원") >= 0) return 77;       // 망원
+    return 26;                                                             // 광각/메인 기본
+  }
+
+  // deviceId 지정 시 해당 렌즈로, 없으면 후면 카메라. autoCal=true면 렌즈에 맞춰 보정값 갱신.
+  function startCamera(deviceId, autoCal) {
     if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
       showMsg("이 브라우저는 카메라를 지원하지 않거나 보안 컨텍스트(HTTPS/localhost)가 아닙니다. 가이드 수치는 계속 확인할 수 있어요.", null);
       return;
     }
     showMsg("카메라를 켜는 중…", null);
-    navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: false
-    }).then(function (s) {
+    stopStream();
+    var videoC = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } };
+    videoC.width = { ideal: 1920 }; videoC.height = { ideal: 1080 };
+    navigator.mediaDevices.getUserMedia({ video: videoC, audio: false }).then(function (s) {
       stream = s;
       video.srcObject = s;
       video.play().catch(function () {});
       msg.hidden = true;
+      var track = s.getVideoTracks()[0];
+      var st = (track && track.getSettings) ? track.getSettings() : {};
+      currentDeviceId = st.deviceId || deviceId || null;
+      if (autoCal && track) {
+        state.camEquiv = guessEquiv(track.label);
+        calRange.value = state.camEquiv; saveCam(); syncLabels();
+      }
+      populateDevices();
       measure(); render();
     }).catch(function (err) {
       var name = err && err.name;
       var t = "카메라를 시작할 수 없습니다.";
       if (name === "NotAllowedError" || name === "SecurityError") t = "카메라 권한이 거부되었습니다. 브라우저 설정에서 허용 후 다시 시도하세요.";
-      else if (name === "NotFoundError" || name === "OverconstrainedError") t = "사용 가능한 카메라를 찾지 못했습니다.";
+      else if (name === "NotFoundError" || name === "OverconstrainedError") t = "선택한 렌즈/카메라를 사용할 수 없습니다.";
       showMsg(t + " (가이드 수치는 계속 확인 가능)", "다시 시도");
     });
   }
 
-  startBtn.addEventListener("click", startCamera);
+  // 권한 허용 후 사용 가능한 카메라(렌즈) 목록 → 2개 이상이면 선택 노출
+  function populateDevices() {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) return;
+    navigator.mediaDevices.enumerateDevices().then(function (list) {
+      var cams = list.filter(function (d) { return d.kind === "videoinput"; });
+      if (cams.length <= 1) { devField.hidden = true; return; }
+      devSel.innerHTML = "";
+      cams.forEach(function (d, i) {
+        var o = document.createElement("option");
+        o.value = d.deviceId;
+        o.textContent = d.label || ("카메라 " + (i + 1));
+        devSel.appendChild(o);
+      });
+      if (currentDeviceId) devSel.value = currentDeviceId;
+      devField.hidden = false;
+    }).catch(function () {});
+  }
+
+  devSel.addEventListener("change", function () { startCamera(devSel.value, true); });
+  startBtn.addEventListener("click", function () { startCamera(); });
+  // 영상 메타데이터/크기 확정 시 정확한 종횡비로 다시 그림
+  video.addEventListener("loadedmetadata", function () { measure(); render(); });
 
   // 페이지를 떠날 때 트랙 정리
-  window.addEventListener("pagehide", function () {
-    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
-  });
+  window.addEventListener("pagehide", stopStream);
 
   /* ---------- 초기 렌더 (영상 없이도 가이드/수치 표시) ---------- */
   measure();
