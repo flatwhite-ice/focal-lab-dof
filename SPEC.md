@@ -121,3 +121,13 @@ focal-lab-dof/                 (저장소 루트 = 사이트 루트)
 - **실브라우저**: 저장소 루트에서 `python3 -m http.server 8000` → `http://127.0.0.1:8000/`.
   라이트/다크 토글·슬라이더·고급 심도·SVG·모바일 폭 확인.
   (검증 환경 메모: 시스템 Chrome + Playwright `chrome` 채널.)
+- **카메라 오버레이 화각 앵커** (`camera.html`): 기준 렌즈의 센서 w/h·실초점에서 역산한
+  라이브뷰 대각 화각이 공개 스펙과 일치하는지 점검. `node`로:
+  ```
+  node -e "const C=require('./src/convert.js');const a=(d,f)=>C.aov(d,f);
+  const uw={w:5.91,h:4.43,f:2.22};            // iPhone 17 Pro 초광각(환산13mm)
+  console.log('UW 대각', a(Math.hypot(uw.w,uw.h),uw.f).toFixed(1));"  # ≈118° (애플 공식 ~120°)
+  ```
+  앵커: 17 Pro 초광각 대각 ≈118°, 메인(24mm) ≈84°, 망원(100mm) ≈24°.
+  박스비율 = `tan(대상화각/2)/tan(카메라화각/2)` (직선투영). FF@24mm은 17Pro 초광각 기준 가로 ≈56%
+  (아이폰 1× 메인이 초광각의 ~절반 폭). 화면 readout의 "대각 N°"로 기기에서 직접 대조 가능.

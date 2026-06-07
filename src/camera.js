@@ -145,7 +145,12 @@
     var Flong = C.aov(effLong, fp), Fshort = C.aov(effShort, fp);
     // element 방향에 맞춰 h/v 매핑 (세로영상이면 짧은변이 수평)
     var landscape = (vw >= vh);
-    return { h: landscape ? Flong : Fshort, v: landscape ? Fshort : Flong, name: r.name };
+    return {
+      h: landscape ? Flong : Fshort,
+      v: landscape ? Fshort : Flong,
+      diag: C.aov(Math.hypot(effLong, effShort), fp),   // 역산된 라이브뷰 대각 화각(검증용)
+      name: r.name
+    };
   }
 
   /* ---------- 캔버스 측정 ---------- */
@@ -242,7 +247,7 @@
     readout.innerHTML =
       '<span class="ro-fmt">' + esc(f.name) + ' · ' + focal + 'mm → 환산 ' + ef.toFixed(1) + 'mm</span>' +
       '<span>포맷 화각 <b>' + ang.d.toFixed(1) + '°</b></span>' +
-      '<span class="ro-ff">기준 ' + esc(cam.name) + ' · 화면 ' + cam.h.toFixed(0) + '°×' + cam.v.toFixed(0) + '°</span>';
+      '<span class="ro-ff">기준 ' + esc(cam.name) + ' · 화면 ' + cam.h.toFixed(0) + '°×' + cam.v.toFixed(0) + '° · 대각 ' + cam.diag.toFixed(0) + '°</span>';
 
     if (fmtBox.over) {
       warnEl.hidden = false;
