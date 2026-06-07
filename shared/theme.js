@@ -1,7 +1,11 @@
 /* photologs — 테마(라이트/다크) 토글
    FOUC 방지를 위해 <head>에서 가능한 한 일찍 로드할 것. */
 (function () {
-  var KEY = "photologs-theme";
+  var script = document.currentScript;
+  // 저장 키는 스크립트 태그의 data-storage-key로 주입(없으면 기존 값으로 폴백).
+  // data-migrate-from: 새 키에 값이 없을 때 옛 키 값을 1회 이전(옛 키는 보존).
+  var KEY = (script && script.dataset.storageKey) || "photologs-theme";
+  var MIGRATE_FROM = script && script.dataset.migrateFrom;
   var root = document.documentElement;
 
   function systemPrefersDark() {
@@ -12,6 +16,15 @@
     var saved = null;
     try { saved = localStorage.getItem(KEY); } catch (e) {}
     if (saved === "light" || saved === "dark") return saved;
+    // 옛 키에서 일회성 이전 (focal-lab 전용 키로 분리되기 전 선택값 보존)
+    if (MIGRATE_FROM) {
+      var old = null;
+      try { old = localStorage.getItem(MIGRATE_FROM); } catch (e) {}
+      if (old === "light" || old === "dark") {
+        try { localStorage.setItem(KEY, old); } catch (e) {}
+        return old;
+      }
+    }
     return systemPrefersDark() ? "dark" : "light";
   }
 
