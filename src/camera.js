@@ -8,13 +8,14 @@
   var $ = function (id) { return document.getElementById(id); };
   var RAD = Math.PI / 180;
 
-  var fmtSel = $("cam-format");
-  var focalRange = $("cam-focal"), focalVal = $("cam-focal-val");
+  var fmtSel = $("cam-format"), noteEl = $("cam-format-note");
+  var focalNum = $("cam-focal"), focalRange = $("cam-focal-range");
   var calRange = $("cam-cal"), calVal = $("cam-cal-val");
   var video = $("cam-video"), canvas = $("cam-canvas"), ctx = canvas.getContext("2d");
   var readout = $("cam-readout"), warnEl = $("cam-warn");
   var msg = $("cam-msg"), msgText = $("cam-msg-text"), startBtn = $("cam-start");
   var devSel = $("cam-device"), devField = $("cam-device-field");
+  var panel = $("cam-panel"), handle = $("cam-handle"), summaryEl = $("cam-summary");
 
   /* ---------- 포맷 인덱스 + 셀렉트 (app.js 패턴 재사용) ---------- */
   var INDEX = {};
@@ -38,6 +39,7 @@
   var clampCal = function (v) { return Math.min(80, Math.max(10, v)); };
 
   var state = { fmtId: "6x6", focal: 80, camEquiv: 26 };
+  var hasSavedCam = false;   // 사용자가 보정값을 저장한 적 있으면 자동선택이 덮어쓰지 않음
 
   (function loadState() {
     try {
@@ -47,7 +49,7 @@
     } catch (e) {}
     try {
       var cam = parseFloat(localStorage.getItem(CAM_KEY));
-      if (isFinite(cam)) state.camEquiv = clampCal(cam);
+      if (isFinite(cam)) { state.camEquiv = clampCal(cam); hasSavedCam = true; }
     } catch (e) {}
   })();
 
@@ -66,8 +68,20 @@
 
   // 컨트롤 초기값 반영
   fmtSel.value = state.fmtId;
+  focalNum.value = state.focal;
   focalRange.value = state.focal;
   calRange.value = state.camEquiv;
+
+  /* ---------- 메타 표기 (포맷 주석 · 핸들 요약) ---------- */
+  function curFmt() { return INDEX[state.fmtId] || INDEX["6x6"]; }
+  function updateNote() {
+    var f = curFmt();
+    noteEl.textContent = f.note ? (f.est ? "추정 · " : "") + f.note : "";
+  }
+  function updateSummary() {
+    summaryEl.textContent = curFmt().name + " · " + state.focal + "mm";
+  }
+  updateNote(); updateSummary();
 
   /* ---------- 카메라 화각(기준) ----------
      camEquiv(환산 초점거리)로 카메라 전체 프레임의 화각을 구한 뒤,
@@ -199,24 +213,34 @@
     rafId = requestAnimationFrame(function () { rafId = null; render(); });
   }
 
-  /* ---------- 입력 와이어링 ---------- */
-  function syncLabels() {
-    focalVal.textContent = state.focal + "mm";
-    calVal.textContent = state.camEquiv + "mm";
-  }
-  syncLabels();
+  /* ---------- 입력 와이어링 (환산기 콤보 패턴) ---------- */
+  function onInputChange() { updateSummary(); saveInputs(); scheduleRender(); }
 
   fmtSel.addEventListener("change", function () {
     state.fmtId = fmtSel.value;
-    saveInputs(); scheduleRender();
+    updateNote(); onInputChange();
+  });
+  // 숫자입력 ↔ 슬라이더 양방향 (app.js link() 패턴)
+  focalNum.addEventListener("input", function () {
+    var v = parseFloat(focalNum.value);
+    if (isFinite(v)) { state.focal = clampFocal(v); focalRange.value = state.focal; }
+    onInputChange();
   });
   focalRange.addEventListener("input", function () {
     state.focal = clampFocal(parseFloat(focalRange.value));
-    syncLabels(); saveInputs(); scheduleRender();
+    focalNum.value = state.focal;
+    onInputChange();
   });
   calRange.addEventListener("input", function () {
     state.camEquiv = clampCal(parseFloat(calRange.value));
-    syncLabels(); saveCam(); scheduleRender();
+    hasSavedCam = true;
+    saveCam(); scheduleRender();   // calVal은 render에서 갱신
+  });
+
+  // 패널 접기/펼치기
+  handle.addEventListener("click", function () {
+    var collapsed = panel.classList.toggle("is-collapsed");
+    handle.setAttribute("aria-expanded", String(!collapsed));
   });
 
   window.addEventListener("resize", function () { measure(); scheduleRender(); });
@@ -225,7 +249,15 @@
   });
 
   /* ---------- 카메라 시작 / 렌즈 전환 ---------- */
-  var stream = null, currentDeviceId = null;
+  var stream = null, currentDeviceId = null, currentLabel = "", autoPicked = false;
+
+  // 보정값을 환산 초점거리로 자동 설정 — 저장하지 않음(저장은 사용자 수동 조절 때만).
+  // 이렇게 해야 다음 방문에도 '렌즈에 맞춘 자동값'이 우선되고, 수동 미세조정만 영속화됨.
+  function applyCal(equiv) {
+    state.camEquiv = clampCal(equiv);
+    calRange.value = state.camEquiv;
+    scheduleRender();
+  }
 
   function showMsg(text, btnLabel) {
     msgText.textContent = text;
@@ -264,11 +296,11 @@
       var track = s.getVideoTracks()[0];
       var st = (track && track.getSettings) ? track.getSettings() : {};
       currentDeviceId = st.deviceId || deviceId || null;
-      if (autoCal && track) {
-        state.camEquiv = guessEquiv(track.label);
-        calRange.value = state.camEquiv; saveCam(); syncLabels();
-      }
+      currentLabel = (track && track.label) || "";
+      if (autoCal) applyCal(guessEquiv(currentLabel));
       populateDevices();
+      // 최초(후면 기본) 시작이면 가장 넓은 렌즈로 자동 전환
+      if (deviceId === undefined) autoSelectWidest();
       measure(); render();
     }).catch(function (err) {
       var name = err && err.name;
@@ -294,6 +326,23 @@
       });
       if (currentDeviceId) devSel.value = currentDeviceId;
       devField.hidden = false;
+    }).catch(function () {});
+  }
+
+  // 시작 후 한 번: 사용 가능한 가장 넓은(초광각) 후면 렌즈로 자동 전환
+  function autoSelectWidest() {
+    if (autoPicked) return;
+    autoPicked = true;
+    if (!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices)) return;
+    navigator.mediaDevices.enumerateDevices().then(function (list) {
+      var ultra = list.filter(function (d) {
+        return d.kind === "videoinput" && /ultra|초광각/i.test(d.label);
+      });
+      if (ultra.length && ultra[0].deviceId && ultra[0].deviceId !== currentDeviceId) {
+        startCamera(ultra[0].deviceId, !hasSavedCam);   // 초광각으로 전환 (보정 자동, 저장값은 보호)
+      } else if (!hasSavedCam) {
+        applyCal(guessEquiv(currentLabel));             // 이미 최광각 → 현재 렌즈로 보정 추정
+      }
     }).catch(function () {});
   }
 
