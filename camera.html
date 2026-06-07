@@ -33,6 +33,11 @@
         <select id="cam-format" aria-label="포맷 선택"></select>
       </div>
 
+      <div class="cam-field" id="cam-device-field" hidden>
+        <label for="cam-device">카메라 (렌즈)</label>
+        <select id="cam-device" aria-label="카메라 선택"></select>
+      </div>
+
       <div class="cam-field">
         <label for="cam-focal">초점거리 <output id="cam-focal-val">80mm</output></label>
         <input type="range" id="cam-focal" min="1" max="600" step="1" value="80" aria-label="초점거리">

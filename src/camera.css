@@ -83,6 +83,7 @@
 }
 
 .cam-field { display: flex; flex-direction: column; gap: 6px; }
+.cam-field[hidden] { display: none; }
 .cam-field > label {
   font-size: 13px; font-weight: 700; color: var(--muted);
   display: flex; justify-content: space-between; align-items: baseline;
