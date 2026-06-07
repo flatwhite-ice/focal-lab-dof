@@ -6,6 +6,7 @@
   <title>Focal Lab · 카메라 화각</title>
   <meta name="description" content="카메라 라이브뷰 위에 선택한 포맷의 환산 화각과 풀프레임 프레이밍을 실시간으로 겹쳐 보는 AR 프레이밍 뷰">
   <link rel="stylesheet" href="shared/style.css">
+  <link rel="stylesheet" href="src/app.css">
   <link rel="stylesheet" href="src/camera.css">
   <script src="shared/theme.js" data-storage-key="focal-lab-theme" data-migrate-from="photologs-theme"></script>
 </head>
@@ -28,28 +29,44 @@
     </div>
 
     <div class="cam-panel" id="cam-panel">
-      <div class="cam-field">
-        <label for="cam-format">포맷</label>
-        <select id="cam-format" aria-label="포맷 선택"></select>
-      </div>
+      <button class="cam-handle" id="cam-handle" type="button" aria-expanded="true" aria-controls="cam-body">
+        <span class="cam-handle__summary" id="cam-summary">입력값</span>
+        <span class="cam-handle__chevron" aria-hidden="true">▾</span>
+      </button>
 
-      <div class="cam-field" id="cam-device-field" hidden>
-        <label for="cam-device">카메라 (렌즈)</label>
-        <select id="cam-device" aria-label="카메라 선택"></select>
-      </div>
+      <div class="cam-body" id="cam-body">
+        <div class="field">
+          <label for="cam-format">포맷</label>
+          <select id="cam-format" aria-label="포맷 선택"></select>
+          <div class="hint" id="cam-format-note"></div>
+        </div>
 
-      <div class="cam-field">
-        <label for="cam-focal">초점거리 <output id="cam-focal-val">80mm</output></label>
-        <input type="range" id="cam-focal" min="1" max="600" step="1" value="80" aria-label="초점거리">
-      </div>
+        <div class="field" id="cam-device-field" hidden>
+          <label for="cam-device">카메라 (렌즈)</label>
+          <select id="cam-device" aria-label="카메라 선택"></select>
+        </div>
 
-      <div class="cam-field">
-        <label for="cam-cal">기준 카메라 보정 <output id="cam-cal-val">26mm</output></label>
-        <input type="range" id="cam-cal" min="10" max="80" step="0.5" value="26" aria-label="기준 카메라 화각 보정">
-        <p class="cam-hint">라이브뷰와 가이드가 맞도록 조절 (기기별 화각 차이 보정)</p>
-      </div>
+        <div class="field">
+          <label for="cam-focal">초점거리</label>
+          <div class="combo">
+            <span class="input-unit" data-unit="mm">
+              <input type="text" id="cam-focal" inputmode="decimal" value="80" aria-label="초점거리 입력">
+            </span>
+            <input type="range" id="cam-focal-range" min="1" max="600" step="1" value="80" aria-label="초점거리 슬라이더">
+          </div>
+        </div>
 
-      <a class="cam-back" href="./">← 환산기로</a>
+        <details class="advanced" id="cam-advanced">
+          <summary>고급 · 기준 카메라 보정</summary>
+          <div class="field">
+            <label for="cam-cal">내 폰 카메라 화각 <output id="cam-cal-val">26mm</output></label>
+            <input type="range" id="cam-cal" min="10" max="80" step="0.5" value="26" aria-label="기준 카메라 화각 보정">
+            <p class="hint">라이브뷰와 가이드가 어긋나면 조절 · 렌즈를 바꾸면 자동 설정됩니다.</p>
+          </div>
+        </details>
+
+        <a class="cam-back" href="./">← 환산기로</a>
+      </div>
     </div>
   </main>
 
