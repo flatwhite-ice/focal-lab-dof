@@ -12,13 +12,23 @@
   letter-spacing: -.03em; margin: 0 0 4px;
 }
 .app__intro p { color: var(--muted); margin: 0; font-size: 15px; line-height: 1.45; }
-.app__intro .app__cta { margin-top: 10px; }
-.app__intro .app__cta a {
-  display: inline-block; font-size: 14px; font-weight: 700; color: var(--accent);
-  background: var(--accent-soft); padding: 7px 14px; border-radius: 999px;
+
+/* 타이틀 옆 카메라 진입 버튼 */
+.app__titlerow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 4px;
+}
+.app__titlerow h1 { margin: 0; }
+.app__cta {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 700; color: var(--accent);
+  background: var(--accent-soft); padding: 7px 13px; border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
 }
-.app__intro .app__cta a:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 18%, var(--accent-soft)); }
+.app__cta:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 18%, var(--accent-soft)); }
+.app__beta {
+  font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: #fff; background: var(--accent); padding: 1px 6px; border-radius: 999px;
+}
 
 /* 2단 레이아웃: 입력 / 결과 */
 .app__grid {
