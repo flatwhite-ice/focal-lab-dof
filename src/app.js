@@ -8,6 +8,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var fmtSel = $("format");
 
+  // 슬라이더 클램프 (link 동기화 + localStorage 복원 공용)
+  var clampFocal = function (v) { return Math.min(600, Math.max(1, v)); };
+  var clampDist  = function (v) { return Math.min(50, Math.max(0.1, v)); };
+
+  var STORE_KEY = "focal-lab-inputs";
+
   // id → format 빠른 조회
   var INDEX = {};
   window.FORMATS.forEach(function (g) {
@@ -26,7 +32,6 @@
     });
     fmtSel.appendChild(og);
   });
-  fmtSel.value = "6x6"; // 기본: 6×6 중형
 
   /* ---------- 데이터 주석 ---------- */
   var nl = $("notes-list");
@@ -59,7 +64,7 @@
 
   link("focal", "focal-range", update,
     function (v) { return v; },                       // range→num (mm 그대로)
-    function (v) { return Math.min(600, Math.max(1, v)); });
+    clampFocal);
 
   link("fnumber", "fnumber-range", update,
     function (i) { return STOPS[i]; },                 // range(index)→num(f값)
@@ -67,7 +72,7 @@
 
   link("distance", "distance-range", update,
     function (v) { return v; },
-    function (v) { return Math.min(50, Math.max(0.1, v)); });
+    clampDist);
 
   // 포커스 시 캐럿을 값 끝으로 — 모바일에서 뒤에서부터 지우며 수정하기 편하게.
   // (탭의 기본 캐럿 배치 뒤에 실행되도록 rAF로 지연)
@@ -123,6 +128,35 @@
     }
     $("format-note").textContent = f.note ? (f.est ? "추정 · " : "") + f.note : "";
     update();
+  }
+
+  /* ---------- 입력값 영속화 (localStorage) ---------- */
+  function saveState() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        format:   fmtSel.value,
+        focal:    $("focal").value,
+        fnumber:  $("fnumber").value,
+        distance: $("distance").value,
+        advanced: $("advanced").open
+      }));
+    } catch (e) {}
+  }
+
+  function loadState() {
+    try {
+      var s = JSON.parse(localStorage.getItem(STORE_KEY));
+      return (s && typeof s === "object") ? s : null;
+    } catch (e) { return null; }
+  }
+
+  // 숫자입력 + 슬라이더를 동시에 세팅. raw가 숫자가 아니면 건드리지 않고 false.
+  function applyInput(numId, rangeId, raw, toRange) {
+    var v = parseFloat(raw);
+    if (!isFinite(v)) return false;
+    $(numId).value = raw;
+    $(rangeId).value = toRange(v);
+    return true;
   }
 
   /* ---------- 계산 & 렌더 ---------- */
@@ -245,6 +279,8 @@
     if (sum) sum.textContent = f.name + " · " + fmtNum(focal, 1) + "mm · f/" + fmtNum(N, 1);
 
     drawViz(f, focal);
+
+    saveState();
   }
 
   /* ---------- 통합 시각화: 프레임(상단) + 화각 부채꼴(하단) ----------
@@ -373,6 +409,20 @@
     });
   }
 
-  // 초기 렌더
-  onFormatChange();
+  // 초기 렌더 — 저장값이 있으면 복원, 없으면 기본 포맷으로 시작
+  var saved = loadState();
+  if (saved && INDEX[saved.format]) {
+    fmtSel.value = saved.format;
+    // 저장값을 직접 복원 → 폰 포맷이라도 prefill로 덮어쓰지 않고 마지막 사용값 유지
+    applyInput("focal",    "focal-range",    saved.focal,    clampFocal);
+    applyInput("fnumber",  "fnumber-range",  saved.fnumber,  nearestStopIndex);
+    applyInput("distance", "distance-range", saved.distance, clampDist);
+    if (saved.advanced) $("advanced").open = true;
+    var f0 = INDEX[fmtSel.value];
+    $("format-note").textContent = f0.note ? (f0.est ? "추정 · " : "") + f0.note : "";
+    update();                 // onFormatChange 대신 update만 → 폰 prefill 회피
+  } else {
+    fmtSel.value = "6x6";     // 기본: 6×6 중형
+    onFormatChange();         // 첫 방문: 폰 포맷이면 prefill, 그 외 HTML 기본값
+  }
 })();
