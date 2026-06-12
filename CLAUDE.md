@@ -34,6 +34,12 @@ Three globals are loaded in order by `index.html` and wired together; there is n
 - **`src/formats.js`** → `window.FORMATS` + `window.FORMAT_NOTES`. The format datasheet (~87 entries: large/medium-format film, medium-format digital backs, APS, 1-inch, every iPhone). Each entry is `{ id, name, w, h, note?, est?, focal?, fnumber?, equiv?, ref? }` where **`w,h` (exposed image area in mm) is the single source of truth** for all calculations. Entries with native `focal/fnumber/equiv` (phones) auto-prefill the inputs on selection. `est:true` marks estimated (not measured) dimensions.
 - **`src/app.js`** → UI wiring. Listens to input/slider events, calls `Convert.*`, updates DOM + the combined format/AOV SVG (`drawViz`). The two hero values (equiv focal, equiv aperture) animate with a count-up tween + pulse (`setStat`/`pulse`); everything else updates instantly. Respects `prefers-reduced-motion`.
 
+The camera viewfinder page (`camera.html`) loads three more globals on top of the above:
+
+- **`src/camera-data.js`** → `window.CameraData`. Camera-page-only data: `VIDEO_FOV` (measured getUserMedia video-stream FOVs, keyed by model + lens + aspect — video FOV ≠ still-photo FOV because of EIS/readout crop) and `SCREENS` (logical resolution + DPR → iPhone model candidates for auto-suggestion).
+- **`src/camera-calib.js`** → `window.CamCalib`. Guided per-lens calibration: a known-width target at a measured distance solves the true horizontal FOV via `tan(cam/2)=tan(θ/2)/frac`, normalized to long-edge/zoom-1 and returned through `onSave` (camera.js owns the stream and persistence).
+- **`src/camera.js`** → viewfinder wiring. Reference FOV resolves by priority: user calibration (`focal-lab-cam` v2 localStorage: `{v:2, ref, corr, calib:[{deviceId, label, lens, fovLong, aspect, …}]}`, v1 `{ref, corr}` migrated on load) → `CameraData.VIDEO_FOV` → spec-derived fallback. Stream `zoom`/resolution from `track.getSettings()` are factored in; a readout badge shows which source is active (실측/테이블/추정).
+
 **`shared/`** (`style.css`, `theme.js`, `nav.js`) is **vendored** from the photologs site for self-containment — there is no external dependency. If the upstream originals change, sync manually. `nav.js` is configured via `data-` attributes on its `<script>` tag in `index.html`.
 
 ## Key conventions

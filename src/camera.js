@@ -1,16 +1,22 @@
 /* Focal Lab · 카메라 화각 오버레이(뷰파인더) 와이어링.
-   convert.js(Convert), formats.js(FORMATS) 의존.
+   convert.js(Convert), formats.js(FORMATS), camera-data.js(CameraData), camera-calib.js(CamCalib) 의존.
 
    정확도 설계:
-   - video는 object-fit: contain → 센서 프레임 '전체'를 레터박스로 표시(잘림 없음).
+   - video는 object-fit: contain → 영상 프레임 '전체'를 레터박스로 표시(잘림 없음).
      덕분에 오버레이를 영상 프레임 좌표에 정확히 매핑할 수 있다.
-   - 기준 카메라는 formats.js의 실제 폰 렌즈(센서 w/h + 실초점)를 선택 → 추측 제거.
-   - 영상 실제 종횡비/방향을 반영해 카메라 화각을 계산하고, 직선투영(tan 비)으로 박스 크기 결정.
-   - 선택 포맷 프레임 밖을 어둡게(뷰파인더 마스크). 미세 오차는 정밀 보정(±)으로 흡수. */
+   - 기준 화각(fovLong = 줌 1 기준 영상 장변 화각)은 우선순위 체인으로 결정(resolveFOV):
+     ① 사용자 실측 캘리브레이션(렌즈별 영속, focal-lab-cam v2) →
+     ② CameraData.VIDEO_FOV 실측 테이블 →
+     ③ formats.js 폰 렌즈(스틸 환산초점 역산)에서 유도(추정).
+     스틸 스펙 역산은 비디오 스트림의 EIS 마진·리드아웃 크롭을 모르므로 폴백일 뿐이다.
+   - 단변 화각은 현재 스트림 종횡비에서 tan-공간으로 유도, 스트림 zoom(getSettings) 반영.
+   - 직선투영(tan 비)으로 박스 크기 결정. 선택 포맷 프레임 밖은 어둡게(뷰파인더 마스크).
+   - 정밀 보정(±)은 실측 후 남는 잔여 오차 트림 용도로 존속. */
 (function () {
   "use strict";
 
   var C = window.Convert;
+  var CD = window.CameraData || { VIDEO_FOV: [], SCREENS: [] };
   var $ = function (id) { return document.getElementById(id); };
   var RAD = Math.PI / 180;
 
@@ -23,6 +29,7 @@
   var msg = $("cam-msg"), msgText = $("cam-msg-text"), startBtn = $("cam-start");
   var devSel = $("cam-device"), devField = $("cam-device-field");
   var panel = $("cam-panel"), handle = $("cam-handle"), summaryEl = $("cam-summary");
+  var streamInfoEl = $("cam-stream-info"), calibBtn = $("cam-calib-open"), modelHintEl = $("cam-model-hint");
 
   /* ---------- 포맷 인덱스 + 셀렉트 (app.js 패턴 재사용) ---------- */
   var INDEX = {};
@@ -67,15 +74,25 @@
     return i;
   })();
 
-  /* ---------- 상태 & 영속화 ---------- */
+  /* ---------- 상태 & 영속화 ----------
+     focal-lab-cam v2: { v:2, ref:<phone name>, corr:<배율>,
+       calib:[{ deviceId, label, lens, fovLong(줌1 장변 화각°), aspect, w, h, zoom,
+                target:{mm,distMm}, ts }] }
+     v1({ref,corr})은 로드 시 승계하고 다음 저장에서 v2로 기록. */
   var INPUTS_KEY = "focal-lab-inputs";   // 포맷·초점 (app.js와 공유)
-  var CAM_KEY = "focal-lab-cam";         // { ref:<phone name>, corr:<배율> }
+  var CAM_KEY = "focal-lab-cam";
 
   var clampFocal = function (v) { return Math.min(600, Math.max(1, v)); };
   var clampCorr = function (v) { return Math.min(1.6, Math.max(0.6, v)); };
 
-  var state = { fmtId: "6x6", focal: 80, ref: DEFAULT_REF, corr: 1 };
+  var state = { fmtId: "6x6", focal: 80, ref: DEFAULT_REF, corr: 1, calib: [] };
   var hasSavedRef = false;   // 사용자가 기준 렌즈를 고른 적 있으면 자동선택이 덮어쓰지 않음
+
+  function validCalib(e) {
+    return e && typeof e === "object" &&
+      isFinite(e.fovLong) && e.fovLong > 0 && e.fovLong < 180 &&
+      isFinite(e.aspect) && e.aspect >= 1;
+  }
 
   (function loadState() {
     try {
@@ -85,12 +102,13 @@
     } catch (e) {}
     try {
       var c = JSON.parse(localStorage.getItem(CAM_KEY));
-      if (c && typeof c === "object") {
+      if (c && typeof c === "object") {       // v1·v2 공통 필드
         if (c.ref) {
           var i = findPhone(function (n) { return n === c.ref; });
           if (i >= 0) { state.ref = i; hasSavedRef = true; }
         }
         if (isFinite(parseFloat(c.corr))) state.corr = clampCorr(parseFloat(c.corr));
+        if (c.v === 2 && Array.isArray(c.calib)) state.calib = c.calib.filter(validCalib);
       }
     } catch (e) {}
   })();
@@ -104,7 +122,11 @@
     try { localStorage.setItem(INPUTS_KEY, JSON.stringify(obj)); } catch (e) {}
   }
   function saveCam() {
-    try { localStorage.setItem(CAM_KEY, JSON.stringify({ ref: PHONES[state.ref].name, corr: state.corr })); } catch (e) {}
+    try {
+      localStorage.setItem(CAM_KEY, JSON.stringify({
+        v: 2, ref: PHONES[state.ref].name, corr: state.corr, calib: state.calib
+      }));
+    } catch (e) {}
   }
 
   // 컨트롤 초기값
@@ -127,29 +149,111 @@
   }
   updateNote(); updateSummary(); updateCorrLabel();
 
-  /* ---------- 카메라(기준 렌즈) 화각 ----------
-     영상 프레임의 수평/수직 화각을 element 좌표 기준으로 산출.
-     ref 폰 렌즈의 센서 w/h(4:3, 가로기준)와 실초점으로 계산하고,
-     영상 종횡비(센서 크롭)와 element 방향(가로/세로)을 반영. */
-  function cameraFOV(vw, vh) {
-    var r = PHONES[state.ref] || PHONES[DEFAULT_REF];
-    var fp = r.focal;
-    var sLong = Math.max(r.w, r.h), sShort = Math.min(r.w, r.h);  // 센서 가로/세로(mm)
+  /* ---------- 스트림 인트로스펙션 ----------
+     현재 비디오 트랙의 getSettings()를 보관. zoom은 iOS 17+ Safari에서만
+     노출될 수 있으므로 null 허용(null ⇒ 1로 취급). 1.5s 폴링으로 변화 감지. */
+  var streamInfo = { w: 0, h: 0, aspect: 0, zoom: null, deviceId: null, label: "" };
+  var streamPoll = null;
+
+  function updateStreamInfo() {
+    var track = stream && stream.getVideoTracks()[0];
+    if (!track || !track.getSettings) return false;
+    var st = track.getSettings();
+    var zoom = isFinite(st.zoom) ? st.zoom : null;
+    var changed = st.width !== streamInfo.w || st.height !== streamInfo.h || zoom !== streamInfo.zoom;
+    streamInfo = {
+      w: st.width || 0, h: st.height || 0,
+      aspect: (st.width && st.height) ? Math.max(st.width, st.height) / Math.min(st.width, st.height) : 0,
+      zoom: zoom, deviceId: st.deviceId || null, label: track.label || ""
+    };
+    return changed;
+  }
+  function updateStreamReadout() {
+    if (!streamInfoEl) return;
+    if (!streamInfo.w) { streamInfoEl.textContent = "스트림 없음"; return; }
+    streamInfoEl.textContent = streamInfo.w + "×" + streamInfo.h +
+      " · zoom " + (streamInfo.zoom == null ? "—" : streamInfo.zoom) +
+      (streamInfo.label ? " · " + streamInfo.label : "");
+  }
+  function startStreamPoll() {
+    stopStreamPoll();
+    streamPoll = setInterval(function () {
+      if (updateStreamInfo()) { updateStreamReadout(); scheduleRender(); }
+    }, 1500);
+  }
+  function stopStreamPoll() {
+    if (streamPoll) { clearInterval(streamPoll); streamPoll = null; }
+  }
+
+  /* ---------- 카메라 화각 결정 ----------
+     정규 값은 fovLong = 줌 1 기준 영상 '장변' 화각(도).
+     소스 우선순위: ① 사용자 실측(calib) ② 실측 테이블(VIDEO_FOV) ③ 스틸 스펙 역산. */
+  function refPhone() { return PHONES[state.ref] || PHONES[DEFAULT_REF]; }
+
+  // ③ 폴백: ref 폰 렌즈(센서 w/h + 실초점)에서 장변 화각 유도.
+  //   영상이 센서(4:3)보다 와이드면 장변은 전부 사용된다고 가정(검증 불가 → '추정').
+  function derivedFovLong(aspect) {
+    var r = refPhone();
+    var sLong = Math.max(r.w, r.h), sShort = Math.min(r.w, r.h);
     var sensorAspect = sLong / sShort;
-    // 영상 프레임 종횡비(가로:세로 = 긴변:짧은변)
-    var aLS = (vw && vh) ? Math.max(vw, vh) / Math.min(vw, vh) : sensorAspect;
-    // 영상이 센서를 어떻게 크롭하는지 → 실제 사용된 센서 변 길이
-    var effLong, effShort;
-    if (aLS >= sensorAspect) { effLong = sLong; effShort = sLong / aLS; }  // 더 와이드 → 위아래 크롭
-    else { effShort = sShort; effLong = sShort * aLS; }                    // 더 정사각 → 좌우 크롭
-    var Flong = C.aov(effLong, fp), Fshort = C.aov(effShort, fp);
-    // element 방향에 맞춰 h/v 매핑 (세로영상이면 짧은변이 수평)
+    var effLong = (aspect >= sensorAspect) ? sLong : sShort * aspect;
+    return C.aov(effLong, r.focal);
+  }
+
+  // ① 현재 스트리밍 중인 렌즈의 실측값. deviceId → label → 렌즈 종류 순으로 매칭.
+  function findCalib() {
+    if (!streamInfo.deviceId && !streamInfo.label) return null;
+    var i, e;
+    for (i = 0; i < state.calib.length; i++) {
+      e = state.calib[i];
+      if (streamInfo.deviceId && e.deviceId === streamInfo.deviceId) return e;
+    }
+    for (i = 0; i < state.calib.length; i++) {
+      e = state.calib[i];
+      if (streamInfo.label && e.label === streamInfo.label) return e;
+    }
+    var lens = lensType(streamInfo.label);
+    for (i = 0; i < state.calib.length; i++) {
+      if (state.calib[i].lens === lens) return state.calib[i];
+    }
+    return null;
+  }
+
+  // ② 실측 테이블: 추정 모델 + 렌즈 종류 + 종횡비 버킷 일치.
+  function aspectOf(s) { return s === "4:3" ? 4 / 3 : s === "16:9" ? 16 / 9 : parseFloat(s); }
+  function findTable(aspect) {
+    if (!detectedModel) return null;
+    var lens = streamInfo.label ? lensType(streamInfo.label) : lensType(refPhone().name);
+    for (var i = 0; i < CD.VIDEO_FOV.length; i++) {
+      var t = CD.VIDEO_FOV[i];
+      if (t.model === detectedModel && t.lens === lens &&
+          isFinite(aspectOf(t.aspect)) && Math.abs(aspectOf(t.aspect) - aspect) <= 0.02) return t;
+    }
+    return null;
+  }
+
+  function resolveFOV(vw, vh) {
+    var aspect = (vw && vh) ? Math.max(vw, vh) / Math.min(vw, vh) : 4 / 3;
+    var src, fovLong, aspectNote = false, name;
+    var cal = findCalib();
+    if (cal) {
+      src = "calib"; fovLong = cal.fovLong;
+      aspectNote = Math.abs(cal.aspect - aspect) > 0.02;  // 측정 당시와 비율이 다르면 표기
+      name = streamInfo.label || cal.label || refPhone().name;
+    } else {
+      var t = findTable(aspect);
+      if (t) { src = "table"; fovLong = t.fovLong; name = t.model + " (실측 테이블)"; }
+      else { src = "derived"; fovLong = derivedFovLong(aspect); name = refPhone().name; }
+    }
+    var z = (streamInfo.zoom && isFinite(streamInfo.zoom)) ? streamInfo.zoom : 1;
+    var hL = C.zoomFov(fovLong, z);          // 현재 줌 반영 장변
+    var hS = C.shortFov(hL, aspect);         // 종횡비에서 단변 유도
     var landscape = (vw >= vh);
+    var diag = 2 * Math.atan(Math.hypot(Math.tan(hL / 2 * RAD), Math.tan(hS / 2 * RAD))) / RAD;
     return {
-      h: landscape ? Flong : Fshort,
-      v: landscape ? Fshort : Flong,
-      diag: C.aov(Math.hypot(effLong, effShort), fp),   // 역산된 라이브뷰 대각 화각(검증용)
-      name: r.name
+      h: landscape ? hL : hS,
+      v: landscape ? hS : hL,
+      diag: diag, src: src, aspectNote: aspectNote, name: name
     };
   }
 
@@ -210,7 +314,7 @@
     ctx.clearRect(0, 0, cssW, cssH);
 
     var rect = videoRect();
-    var cam = cameraFOV(rect.vw, rect.vh);
+    var cam = resolveFOV(rect.vw, rect.vh);
     var f = curFmt(), focal = state.focal;
 
     // 표시 방향(가로/세로)에 맞춰 포맷 장변=긴축 정렬
@@ -242,12 +346,15 @@
     ctx.stroke();
     ctx.restore();
 
-    // 상단 수치
+    // 상단 수치 (+ 화각 소스 배지: 실측 > 테이블 > 추정)
     var ef = C.equivFocal(focal, f), ang = C.angles(focal, f);
+    var badge = cam.src === "calib" ? (cam.aspectNote ? "실측·비율보정" : "실측")
+      : cam.src === "table" ? "테이블" : "추정";
     readout.innerHTML =
       '<span class="ro-fmt">' + esc(f.name) + ' · ' + focal + 'mm → 환산 ' + ef.toFixed(1) + 'mm</span>' +
       '<span>포맷 화각 <b>' + ang.d.toFixed(1) + '°</b></span>' +
-      '<span class="ro-ff">기준 ' + esc(cam.name) + ' · 화면 ' + cam.h.toFixed(0) + '°×' + cam.v.toFixed(0) + '° · 대각 ' + cam.diag.toFixed(0) + '°</span>';
+      '<span class="ro-ff">기준 ' + esc(cam.name) + ' · 화면 ' + cam.h.toFixed(0) + '°×' + cam.v.toFixed(0) + '° · 대각 ' + cam.diag.toFixed(0) + '°' +
+      ' <b class="ro-src ro-src--' + cam.src + '">' + badge + '</b></span>';
 
     if (fmtBox.over) {
       warnEl.hidden = false;
@@ -306,12 +413,17 @@
     msg.hidden = false;
   }
   function stopStream() {
+    stopStreamPoll();
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    streamInfo = { w: 0, h: 0, aspect: 0, zoom: null, deviceId: null, label: "" };
+    if (calibBtn) calibBtn.disabled = true;
+    updateStreamReadout();
   }
   function lensType(s) {
     s = (s || "").toLowerCase();
     if (/ultra|초광각/.test(s)) return "ultra";
     if (/tele|망원/.test(s)) return "tele";
+    if (/front|user|전면/.test(s)) return "front";
     return "wide";
   }
 
@@ -329,9 +441,11 @@
       video.srcObject = s;
       video.play().catch(function () {});
       msg.hidden = true;
-      var track = s.getVideoTracks()[0];
-      var st = (track && track.getSettings) ? track.getSettings() : {};
-      currentDeviceId = st.deviceId || deviceId || null;
+      updateStreamInfo();
+      updateStreamReadout();
+      startStreamPoll();
+      if (calibBtn) calibBtn.disabled = false;
+      currentDeviceId = streamInfo.deviceId || deviceId || null;
       populateDevices();
       if (deviceId === undefined) autoSelectWidest();   // 최초: 가장 넓은 렌즈로
       measure(); render();
@@ -354,6 +468,7 @@
 
   function populateDevices() {
     getCams().then(function (cams) {
+      updateModelHint(cams);
       if (cams.length <= 1) { devField.hidden = true; return; }
       devSel.innerHTML = "";
       cams.forEach(function (d, i) {
@@ -366,6 +481,72 @@
     });
   }
 
+  /* ---------- 기기(모델) 자동 추정 ----------
+     화면 논리 해상도 + DPR → CameraData.SCREENS 후보 → 후면 망원 유무로 Pro 압축.
+     추정일 뿐이므로 '추천 + 사용자 확인(적용 링크)'만 하고 저장된 ref는 덮어쓰지 않음. */
+  var detectedModel = null;
+  var LENS_RE = { ultra: /초광각/, tele: /망원/, wide: /광각|메인/ };
+
+  function isRear(label) { return !/front|user|전면/i.test(label || ""); }
+
+  // 모델 문자열이 PHONES 이름의 머리와 '경계까지' 일치하는 항목 탐색
+  // (예: "iPhone 17"이 "iPhone 17 Pro …"에 오매칭되지 않도록 다음 토큰이 ·,/ 인지 확인)
+  function phoneForModel(model, pred) {
+    return findPhone(function (n) {
+      if (n.indexOf(model) !== 0) return false;
+      var rest = n.slice(model.length);   // 단일카메라기는 접미사 없이 이름이 곧 모델
+      if (rest !== "" && !/^\s*[·\/(]/.test(rest)) return false;
+      return pred ? pred(n) : true;
+    });
+  }
+  function phoneForModelLens(model, lens) {
+    var re = LENS_RE[lens] || LENS_RE.wide;
+    var i = phoneForModel(model, function (n) { return re.test(n); });
+    return i >= 0 ? i : phoneForModel(model);
+  }
+
+  function detectModel(cams) {
+    var sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
+    var dpr = window.devicePixelRatio || 1;
+    var row = null;
+    for (var i = 0; i < CD.SCREENS.length; i++) {
+      var r = CD.SCREENS[i];
+      if (r.w === sw && r.h === sh && Math.abs(r.dpr - dpr) < 0.5) { row = r; break; }
+    }
+    if (!row) return null;
+    var cand = row.models.slice();
+    var rear = cams.filter(function (d) { return isRear(d.label); });
+    var labeled = rear.some(function (d) { return !!d.label; });   // 라벨은 권한 허용 후에만
+    if (labeled) {
+      var hasTele = rear.some(function (d) { return lensType(d.label) === "tele"; });
+      var byPro = cand.filter(function (m) { return /pro/i.test(m) === hasTele; });
+      if (byPro.length) cand = byPro;
+    }
+    return cand[0] || null;
+  }
+
+  function applyModelRef() {
+    if (!detectedModel) return;
+    var lens = streamInfo.label ? lensType(streamInfo.label) : "ultra";
+    var i = phoneForModelLens(detectedModel, lens);
+    if (i < 0) return;
+    state.ref = i; refSel.value = String(i);
+    hasSavedRef = true; saveCam(); scheduleRender();
+  }
+
+  function updateModelHint(cams) {
+    detectedModel = detectModel(cams);
+    if (!modelHintEl) return;
+    if (!detectedModel) { modelHintEl.hidden = true; return; }
+    modelHintEl.innerHTML = "";
+    modelHintEl.appendChild(document.createTextNode("감지된 기기: " + detectedModel + " (추정) — "));
+    var a = document.createElement("a");
+    a.href = "#"; a.textContent = "기준 렌즈로 적용";
+    a.addEventListener("click", function (ev) { ev.preventDefault(); applyModelRef(); });
+    modelHintEl.appendChild(a);
+    modelHintEl.hidden = false;
+  }
+
   // 최초 1회: 가장 넓은(초광각) 후면 렌즈로 전환 + 기준 렌즈 기본값을 초광각으로
   function autoSelectWidest() {
     if (autoPicked) return;
@@ -375,8 +556,9 @@
       if (ultra.length && ultra[0].deviceId && ultra[0].deviceId !== currentDeviceId) {
         startCamera(ultra[0].deviceId);
       }
-      if (!hasSavedRef) {   // 사용자가 기준을 안 골랐으면 초광각 기본
-        var i = findPhone(function (n) { return /초광각/.test(n); });
+      if (!hasSavedRef) {   // 사용자가 기준을 안 골랐으면 (감지 모델의) 초광각 기본
+        var i = detectedModel ? phoneForModelLens(detectedModel, "ultra") : -1;
+        if (i < 0) i = findPhone(function (n) { return /초광각/.test(n); });
         if (i >= 0) { state.ref = i; refSel.value = String(i); scheduleRender(); }
       }
     });
@@ -400,6 +582,32 @@
   startBtn.addEventListener("click", function () { startCamera(); });
   video.addEventListener("loadedmetadata", function () { measure(); render(); });
   window.addEventListener("pagehide", stopStream);
+
+  /* ---------- 렌즈 실측 보정 진입 ----------
+     측정·UI는 camera-calib.js(CamCalib) 소관. 스트림·영속화 소유권은 여기 유지. */
+  if (calibBtn) {
+    calibBtn.disabled = true;
+    calibBtn.addEventListener("click", function () {
+      if (!stream || !window.CamCalib) return;
+      window.CamCalib.open({
+        getVideoRect: videoRect,
+        getStreamInfo: function () { updateStreamInfo(); return streamInfo; },
+        getCamFov: function () { var r = videoRect(); return resolveFOV(r.vw, r.vh); },
+        getModel: function () { return detectedModel; },
+        onSave: function (entry) {
+          // 같은 렌즈(deviceId 우선, 없으면 label)의 기존 실측을 교체
+          state.calib = state.calib.filter(function (e) {
+            if (entry.deviceId && e.deviceId) return e.deviceId !== entry.deviceId;
+            return e.label !== entry.label;
+          });
+          state.calib.push(entry);
+          state.corr = 1;                    // 기존 트림은 추정 오차 보상이었으므로 리셋
+          corrRange.value = "1"; updateCorrLabel();
+          saveCam(); scheduleRender();
+        }
+      });
+    });
+  }
 
   /* ---------- 초기 렌더 ---------- */
   measure();

@@ -26,6 +26,78 @@
         <p class="cam-msg__text" id="cam-msg-text">카메라로 선택한 포맷의 화각을 실제 화면 위에서 확인합니다.</p>
         <button class="cam-msg__btn" id="cam-start" type="button">📷 카메라 시작</button>
       </div>
+
+      <!-- 렌즈 실측 보정 (camera-calib.js가 상태 전환) -->
+      <div class="cam-calib" id="cam-calib" hidden>
+        <canvas id="calib-canvas"></canvas>
+
+        <div class="cam-calib__panel">
+          <!-- 0 · 준비 -->
+          <div class="calib-step" id="calib-step0">
+            <h2 class="calib-title">렌즈 실측 보정</h2>
+            <p class="calib-lens" id="calib-lens"></p>
+            <p class="hint">다른 렌즈를 보정하려면 먼저 ‘실제 카메라 장치’를 전환하세요.</p>
+            <div class="field">
+              <label for="calib-target">목표물 (가로 폭)</label>
+              <select id="calib-target" aria-label="목표물 선택">
+                <option value="297">A4 가로 (297mm)</option>
+                <option value="210">A4 세로 (210mm)</option>
+                <option value="85.6">신용카드 가로 (85.6mm)</option>
+                <option value="custom">직접 입력 — 문 폭 등 큰 목표물 권장</option>
+              </select>
+              <span class="input-unit" data-unit="mm">
+                <input type="text" id="calib-target-mm" inputmode="decimal" value="297" aria-label="목표물 폭(mm)">
+              </span>
+            </div>
+            <div class="field">
+              <label for="calib-dist">카메라 → 목표물 거리</label>
+              <span class="input-unit" data-unit="cm">
+                <input type="text" id="calib-dist" inputmode="decimal" value="50" aria-label="거리(cm)">
+              </span>
+              <p class="hint" id="calib-dist-hint"></p>
+            </div>
+            <ol class="calib-guide">
+              <li>목표물을 벽에 평평하게 붙이세요.</li>
+              <li>폰 뒷면에서 목표물까지 거리를 줄자로 재서 입력하세요.</li>
+              <li>폰을 벽과 평행하게, 목표물이 화면 중앙에 오게 하세요.</li>
+            </ol>
+            <div class="calib-actions">
+              <button type="button" id="calib-next" class="cam-msg__btn">다음</button>
+              <button type="button" id="calib-cancel0">취소</button>
+            </div>
+          </div>
+
+          <!-- 1 · 정렬 -->
+          <div class="calib-step" id="calib-step1" hidden>
+            <p class="calib-align-tip">상자의 <b>좌우 변</b>을 목표물 양 끝에 맞추고 십자선을 중앙에. <b>핀치 줌 금지.</b></p>
+            <output class="calib-fov" id="calib-fov" aria-live="polite"></output>
+            <div class="calib-frac">
+              <button type="button" id="calib-minus" aria-label="미세 축소">−</button>
+              <input type="range" id="calib-frac-range" min="0.05" max="1" step="0.001" value="0.4" aria-label="가이드 폭">
+              <button type="button" id="calib-plus" aria-label="미세 확대">＋</button>
+            </div>
+            <p class="cam-warn calib-zoom-warn" id="calib-zoom-warn" hidden>줌/해상도가 변경되었습니다 — 처음부터 다시 진행하세요.</p>
+            <div class="calib-actions">
+              <button type="button" id="calib-done" class="cam-msg__btn">측정 완료</button>
+              <button type="button" id="calib-back1">뒤로</button>
+            </div>
+          </div>
+
+          <!-- 2 · 확인 -->
+          <div class="calib-step" id="calib-step2" hidden>
+            <h2 class="calib-title">측정 결과</h2>
+            <div class="calib-result" id="calib-result"></div>
+            <pre class="calib-embed" id="calib-embed"></pre>
+            <div class="calib-actions">
+              <button type="button" id="calib-copy">복사</button>
+              <button type="button" id="calib-save" class="cam-msg__btn">저장</button>
+              <button type="button" id="calib-retry">다시 측정</button>
+              <button type="button" id="calib-cancel2">취소</button>
+            </div>
+            <p class="hint">저장하면 이 렌즈의 화각이 실측값으로 대체되고, 정밀 보정이 0%로 초기화됩니다.</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="cam-panel" id="cam-panel">
@@ -57,16 +129,26 @@
         </div>
 
         <details class="advanced" id="cam-advanced">
-          <summary>고급 · 정밀 보정 · 기준 렌즈</summary>
+          <summary>고급 · 실측 보정 · 기준 렌즈</summary>
+          <div class="field">
+            <label>렌즈 실측 보정</label>
+            <button type="button" id="cam-calib-open" class="calib-open" disabled>📐 렌즈 실측 보정…</button>
+            <p class="hint">알려진 폭의 목표물로 이 렌즈의 실제 비디오 화각을 측정해 저장합니다(렌즈별 1회). 카메라가 켜져 있어야 합니다.</p>
+          </div>
           <div class="field">
             <label for="cam-corr">정밀 보정 <output id="cam-corr-val">0%</output></label>
             <input type="range" id="cam-corr" min="0.6" max="1.6" step="0.01" value="1" aria-label="정밀 보정">
-            <p class="hint">오버레이가 실제보다 작으면 −, 크면 + 쪽으로 미세조정.</p>
+            <p class="hint">실측 보정 후 남는 미세 오차만 트림 — 오버레이가 실제보다 작으면 −, 크면 +.</p>
           </div>
           <div class="field">
             <label for="cam-ref">내 폰 카메라 (렌즈)</label>
             <select id="cam-ref" aria-label="기준 카메라 렌즈 선택"></select>
-            <div class="hint">라이브뷰의 실제 화각 기준. 정확히 고를수록 오버레이가 뷰파인더처럼 맞습니다.</div>
+            <div class="hint">실측·테이블 값이 없을 때 쓰는 폴백(추정) 화각의 기준.</div>
+            <div class="hint" id="cam-model-hint" hidden></div>
+          </div>
+          <div class="field">
+            <label>스트림</label>
+            <div class="hint" id="cam-stream-info">스트림 없음</div>
           </div>
         </details>
 
@@ -77,6 +159,8 @@
 
   <script src="src/convert.js"></script>
   <script src="src/formats.js"></script>
+  <script src="src/camera-data.js"></script>
+  <script src="src/camera-calib.js"></script>
   <script src="src/camera.js"></script>
 </body>
 </html>
