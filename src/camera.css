@@ -107,6 +107,102 @@
   align-self: flex-start; font-size: 13px; font-weight: 700; color: var(--accent);
 }
 
+/* 화각 소스 배지 (실측 > 테이블 > 추정) */
+.cam-readout .ro-src {
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 800;
+  background: rgba(255, 255, 255, .22); color: #fff;
+}
+.cam-readout .ro-src--calib { background: var(--accent); }
+
+/* ---------- 렌즈 실측 보정 오버레이 ---------- */
+.calib-open {
+  appearance: none; cursor: pointer; font: inherit;
+  font-size: 13px; font-weight: 700;
+  color: var(--accent); background: transparent;
+  border: 1px solid var(--accent); border-radius: 999px;
+  padding: 8px 14px;
+}
+.calib-open:disabled { opacity: .45; cursor: default; }
+
+.cam-calib { position: absolute; inset: 0; z-index: 3; }
+.cam-calib[hidden] { display: none; }
+
+#calib-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+}
+
+/* 보정 중에는 본 오버레이(마스크·프레임)와 하단 패널을 숨겨 목표물이 또렷이 보이게 */
+.cam-stage.is-calibrating #cam-canvas,
+.cam-stage.is-calibrating .cam-readout,
+.cam-stage.is-calibrating .cam-warn { visibility: hidden; }
+body.is-calibrating .cam-panel { display: none; }
+
+.cam-calib__panel {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  max-height: 72%;
+  overflow-y: auto;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+}
+
+.calib-step { display: flex; flex-direction: column; gap: 12px; }
+.calib-step[hidden] { display: none; }
+.calib-step .field { margin: 0; }
+
+.calib-title { margin: 0; font-size: 16px; font-weight: 800; }
+.calib-lens { margin: 0; font-size: 13px; font-weight: 700; color: var(--accent); }
+.calib-guide { margin: 0; padding-left: 1.3em; font-size: 13px; color: var(--muted); }
+.calib-guide li { margin: 2px 0; }
+
+.calib-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.calib-actions button {
+  appearance: none; cursor: pointer; font: inherit;
+  font-size: 14px; font-weight: 700;
+  padding: 10px 18px; border-radius: 999px;
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+.calib-actions .cam-msg__btn { border: 0; font-size: 14px; padding: 10px 20px; }
+
+/* 정렬 단계: 패널을 얇게 — 라이브뷰 가시성 우선 */
+#calib-step1 { gap: 8px; }
+.calib-align-tip { margin: 0; font-size: 13px; color: var(--text); }
+.calib-fov { font-size: 18px; font-weight: 800; color: var(--accent); }
+.calib-frac { display: flex; align-items: center; gap: 10px; }
+.calib-frac input[type="range"] { flex: 1; }
+.calib-frac button {
+  appearance: none; cursor: pointer; font: inherit;
+  width: 38px; height: 38px; border-radius: 50%;
+  font-size: 18px; font-weight: 800; line-height: 1;
+  background: transparent; color: var(--text);
+  border: 1px solid var(--border);
+}
+.calib-zoom-warn { position: static; }
+
+.calib-result p { margin: 0 0 4px; font-size: 14px; }
+.calib-embed {
+  margin: 0; padding: 10px 12px;
+  font-size: 11.5px; line-height: 1.5;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  white-space: pre-wrap; word-break: break-all;
+  user-select: all;
+}
+
+@media (min-width: 760px) {
+  .cam-calib__panel {
+    left: auto; right: 16px; bottom: 16px; width: 380px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+}
+
 /* 넓은 화면(데스크톱)에서는 패널을 우측 카드로 */
 @media (min-width: 760px) {
   .cam-panel {

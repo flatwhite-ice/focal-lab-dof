@@ -1,0 +1,11 @@
+/Users/flatwhite/dev/personal/focal-lab/shared/nav.js
+/Users/flatwhite/dev/personal/focal-lab/shared/theme.js
+/Users/flatwhite/dev/personal/focal-lab/src/app.js
+/Users/flatwhite/dev/personal/focal-lab/src/camera.js
+/Users/flatwhite/dev/personal/focal-lab/src/convert.js
+/Users/flatwhite/dev/personal/focal-lab/src/formats.js
+/Users/flatwhite/dev/personal/focal-lab/CLAUDE.md
+/Users/flatwhite/dev/personal/focal-lab/README.md
+/Users/flatwhite/dev/personal/focal-lab/SPEC.md
+/Users/flatwhite/dev/personal/focal-lab/camera.html
+/Users/flatwhite/dev/personal/focal-lab/index.html

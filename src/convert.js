@@ -18,6 +18,20 @@
   // 화각(도): 어떤 변의 길이 d(mm)와 초점 f(mm)
   function aov(d, focal) { return 2 * Math.atan(d / (2 * focal)) * 180 / Math.PI; }
 
+  // 캘리브레이션: 폭 t(mm) 목표물이 거리 d(mm)에서 프레임 폭의 frac(0..1]을 차지할 때
+  // 카메라 수평 화각(도). tan(cam/2) = tan(θ/2)/frac, θ = 2·atan(t/2d) → aov(t/frac, d)와 동치.
+  function fovFromTarget(targetMm, distMm, frac) { return aov(targetMm / frac, distMm); }
+
+  // 디지털 줌을 화각에 적용(tan-공간): zoom>1 → 좁아짐. 해제는 1/zoom을 넘겨 재사용.
+  function zoomFov(fovDeg, zoom) {
+    return 2 * Math.atan(Math.tan(fovDeg * Math.PI / 360) / zoom) * 180 / Math.PI;
+  }
+
+  // 장변 화각(도) + 프레임 종횡비(장:단) → 단변 화각(도)
+  function shortFov(fovLongDeg, aspect) {
+    return 2 * Math.atan(Math.tan(fovLongDeg * Math.PI / 360) / aspect) * 180 / Math.PI;
+  }
+
   // 네이티브 포맷의 수평/수직/대각 화각
   function angles(focal, fmt) {
     return { h: aov(fmt.w, focal), v: aov(fmt.h, focal), d: aov(diag(fmt), focal) };
@@ -48,7 +62,8 @@
     FF: FF, FF_DIAG: FF_DIAG,
     diag: diag, cropFactor: cropFactor,
     equivFocal: equivFocal, equivAperture: equivAperture,
-    aov: aov, angles: angles, coc: coc, dof: dof
+    aov: aov, angles: angles, coc: coc, dof: dof,
+    fovFromTarget: fovFromTarget, zoomFov: zoomFov, shortFov: shortFov
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;
